@@ -1,2 +1,16 @@
 
 .DS_Store
+
+node_modules/
+
+oracle_solver.egg-info/
+
+solver/__pycache__/
+
+solver/fields/__pycache__/
+
+solver/geometry/__pycache__/
+
+solver/models/__pycache__/
+
+src-tauri/target/

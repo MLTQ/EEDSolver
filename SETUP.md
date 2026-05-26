@@ -1,85 +1,80 @@
 # Oracle — Setup Guide
 
-## Prerequisites
+## How the solver runs
 
-Oracle requires FEniCSx (dolfinx), which has non-trivial installation requirements.
-The recommended path is conda. Do this before anything else.
+The Python solver uses FEniCSx (dolfinx), which is not pip-installable — it's
+distributed via conda-forge and Docker only. The clean solution:
+
+- **Docker** runs the solver (dolfinx, Gmsh, PETSc — all pre-installed in the official image)
+- **UV** manages everything else (linting, testing, the JS/Rust build chain)
+- The Tauri app connects to the solver over HTTP on localhost:7432, same as always
 
 ---
 
-## 1. Python Environment (FEniCSx via conda)
+## 1. Python tooling (UV)
 
-FEniCSx is not pip-installable in a reliable way. Use conda:
-
+Install UV if you don't have it:
 ```bash
-# Install miniforge if you don't have conda
-# https://github.com/conda-forge/miniforge
-
-conda create -n oracle python=3.11
-conda activate oracle
-
-# FEniCSx + Gmsh + petsc
-conda install -c conda-forge fenics-dolfinx mpich gmsh python-gmsh
-
-# FastAPI server
-pip install fastapi uvicorn[standard] pydantic numpy scipy
-
-# Verify FEniCSx
-python -c "import dolfinx; print(dolfinx.__version__)"
-# Should print 0.8.x or later
-
-# Verify Gmsh
-python -c "import gmsh; print(gmsh.__version__)"
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-**macOS note**: If on Apple Silicon, the conda-forge build works but MPI
-parallelism is limited. For single-machine use this is fine.
+Install the non-FEM Python deps (FastAPI, pydantic, etc.):
+```bash
+uv sync
+```
 
-**Arch Linux note**: AUR has `python-fenics-dolfinx` but the conda path
-is more reliable and self-contained.
+This is used for linting, type checking, and running tests against the solver API
+without the full FEM stack. The actual solver runs in Docker.
 
 ---
 
 ## 2. Node / Bun + Tauri
 
 ```bash
-# Node 20+ or Bun
+# Bun
 curl -fsSL https://bun.sh/install | bash
 
-# Rust (for Tauri)
+# Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Tauri CLI
-cargo install tauri-cli --version "^2.0"
-
-# Install JS deps
+# JS deps
 bun install
 ```
 
 ---
 
-## 3. First Run
+## 3. Start the solver (Docker)
 
-### Start solver server manually (for development):
+First build the solver image (one-time, ~2–3 min to pull dolfinx base):
 ```bash
-conda activate oracle
-cd solver
-uvicorn main:app --port 7432 --reload
+docker compose build solver
 ```
 
-Test it:
+Then start it:
+```bash
+docker compose up solver
+```
+
+The solver mounts `./solver/` as a volume, so code changes hot-reload
+without a rebuild. Check it's alive:
 ```bash
 curl http://localhost:7432/health
-# {"status": "ok"}
+# {"status":"ok","solver_version":"0.1.0"}
 ```
 
-### Start Tauri app (dev mode):
+---
+
+## 4. Start the Tauri app
+
 ```bash
 # In a separate terminal
 cargo tauri dev
 ```
 
-### Run a test solve:
+---
+
+## 5. Run a test solve
+
 ```bash
 curl -X POST http://localhost:7432/solve \
   -H "Content-Type: application/json" \
@@ -92,6 +87,7 @@ curl -X POST http://localhost:7432/solve \
       "current_A": 1.0,
       "coil_type": "solenoid"
     },
+    "eed": { "alpha": 0.0, "beta": 0.1, "gamma": 0.1 },
     "domain_radius_m": 0.2,
     "mesh_resolution": "coarse",
     "formulation": "scalar_only",
@@ -105,56 +101,37 @@ Expected response time on coarse: < 10 seconds.
 
 ---
 
-## 4. Tauri Sidecar Configuration
+## 6. Production / sidecar
 
-In production (packaged app), Tauri spawns the solver as a sidecar.
-The Python binary must be bundled or the conda env must be on PATH.
-
-In `tauri.conf.json`:
-```json
-{
-  "bundle": {
-    "externalBin": ["../solver/sidecar_entry"]
-  }
-}
-```
-
-`solver/sidecar_entry` is a shell script:
+The `solver/sidecar_entry` script for the packaged app:
 ```bash
 #!/bin/bash
-conda activate oracle
-exec uvicorn solver.main:app --port 7432
+docker run --rm -p 7432:7432 \
+  -v "$(dirname "$0"):/app/solver" \
+  oracle-solver
 ```
 
-For development, skip sidecar — run solver manually as shown above.
-
----
-
-## 5. Verify Full Stack
-
-1. Solver health: `curl localhost:7432/health` → `{"status":"ok"}`
-2. Test solve (above) returns JSON with `slices` array
-3. Tauri app launches and GeometryPanel renders
-4. Click Solve with default params → SliceViewer shows heatmap
+For a fully self-contained app (no Docker dep on user machine), the alternative is
+to bundle a compiled `dolfinx` binary — complex, deferred to v2.
 
 ---
 
 ## Common Issues
 
-**`ImportError: No module named 'dolfinx'`**
-→ You're not in the oracle conda env. `conda activate oracle`.
+**`docker compose up solver` hangs on first run**
+→ Pulling the `dolfinx/dolfinx:stable` base image (~2 GB). Wait it out.
+
+**`curl localhost:7432/health` → connection refused**
+→ Container isn't up yet, or port conflict. Check: `docker ps` and `lsof -i :7432`.
+
+**Mesh generation failed in solver logs**
+→ Gmsh geometry issue. Reduce `turns` or increase `domain_radius_m`.
+
+**Nédélec orientation warnings**
+→ Expected on first mesh. If solve returns NaN, try `mesh_resolution: "medium"`.
 
 **`Address already in use: 7432`**
-→ Another solver instance is running. `lsof -i :7432` to find it.
-
-**`Mesh generation failed`**
-→ Usually a Gmsh geometry issue. Check `solver/geometry/coil.py` logs.
-   Reducing `turns` or increasing `domain_radius_m` often fixes it.
-
-**Nédélec orientation warnings from FEniCSx**
-→ Expected on first mesh. If solve diverges (NaN in output), the mesh
-   may have inverted elements. Use `mesh_resolution: "medium"` to see
-   if it resolves.
+→ `docker ps` to find the running container, `docker stop <id>`.
 
 **Three.js volume not rendering**
 → WebGL 2 required. Check browser console for shader compilation errors.

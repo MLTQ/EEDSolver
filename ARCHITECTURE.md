@@ -65,7 +65,7 @@ class CoilParams(BaseModel):
     pitch_m: float           # Turn-to-turn pitch
     wire_radius_m: float     # Wire cross-section radius
     current_A: float         # Applied current (amperes)
-    coil_type: str           # "solenoid" | "toroid" | "flat_spiral"
+    coil_type: str           # "solenoid" | "toroid" | "toroid_poloidal" | "flat_spiral" | "rodin"
 
 class SliceRequest(BaseModel):
     axis: str                # "x" | "y" | "z"
@@ -286,7 +286,7 @@ oracle/
 ├── PROJECT.md
 ├── ARCHITECTURE.md
 ├── FIELD_THEORY.md             ← EED equations, sources, parameter rationale
-├── SETUP.md                    ← FEniCSx install, conda env, first run
+├── SETUP.md                    ← FEniCSx install via uv, first run
 ├── solver/
 │   ├── main.py / main.md
 │   ├── server.py / server.md

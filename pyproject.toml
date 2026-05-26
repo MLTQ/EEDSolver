@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oracle-solver"
+version = "0.1.0"
+description = "EED field simulation solver for Oracle"
+requires-python = ">=3.11"
+dependencies = [
+    # Web server — installed in both the Docker image and the local venv
+    # (local venv is used for linting, testing, and type checking without Docker)
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "numpy>=1.26",
+    "scipy>=1.13",
+    # FEM stack (dolfinx, gmsh, mpi4py) lives in the Docker image.
+    # Not pip-installable — use: docker compose up solver
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["solver*"]
+
+[project.optional-dependencies]
+dev = ["httpx", "pytest", "pytest-asyncio", "ruff"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

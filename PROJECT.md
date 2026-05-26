@@ -8,13 +8,13 @@ via FEniCSx, and visualized as interactive 2D slice heatmaps and 3D volumetric v
 Tauri desktop app. This is a lab instrument, not a general-purpose FEM tool.
 
 ## Current State
-**Pre-build.** Architecture and module specs complete. No code written yet.
+**Stage 3 complete.** Full React/TS frontend built and Vite build clean. Ready for `cargo tauri dev` with live solver.
 
 ## Active Work
-Initial build from scratch. Start with:
-1. `solver/` Python package — FEniCSx solver server (FastAPI)
-2. `src-tauri/` — Tauri shell
-3. `src/` — React/TS frontend with 2D slice viewer
+- [x] Stage 1: `solver/` Python package — FEniCSx solver + FastAPI server
+- [x] Stage 2: `src-tauri/` — Tauri shell (types.rs, solver_client.rs, commands.rs) — cargo check clean
+- [x] Stage 3: `src/` — React/TS frontend — VolumeViewer (Three.js ray-march), SliceViewer (Plotly), GeometryPanel, HypothesisLog, App layout — tsc clean, Vite build clean
+- [ ] Stage 4: eed_coupled UI tuning, sensor placement export, HypothesisLog diff view
 
 Build order: solver endpoint → Tauri IPC bridge → slice viewer → 3D view.
 
@@ -65,8 +65,9 @@ numpy arrays → JSON response → Plotly/Three.js render.
   aligns with Pharaoh inference server pattern.
 - **2025-05-25** Plotly for 2D slices over D3 — Plotly heatmap is faster to iterate with
   and handles the array→render pipeline with less code. D3 if we need more control later.
-- **2025-05-25** Three.js volume shader for 3D — browser-native, no extra deps, can do
-  ray-marched scalar volume directly. Secondary view only.
+- **2025-05-25** Three.js volume shader for 3D — browser-native, no extra deps, ray-marched
+  scalar volume with viridis/plasma GLSL colormaps. **Primary view** (flex-1, full panel height).
+  Plotly 2D slices are secondary (bottom panel, collapsible tab).
 - **2025-05-25** Mixed FEniCSx function space for coupled (φ, A) — φ is CG1 scalar,
   A is Nédélec edge elements (N1curl). This is the correct discretization for the
   vector potential in Maxwell + EED.
@@ -76,8 +77,8 @@ numpy arrays → JSON response → Plotly/Three.js render.
   field maxima for lab comparison. No database needed at this scale.
 
 ## Sharp Edges
-- FEniCSx must be installed in the Python environment the sidecar uses. Not pip-installable
-  on all platforms — conda or Docker may be needed. Document the setup path clearly.
+- FEniCSx must be installed in the Python environment the sidecar uses. Install via
+  `uv sync` (see SETUP.md) — requires system MPI (brew install open-mpi on macOS).
 - Nédélec elements require a specific mesh orientation. Gmsh produces compatible meshes
   but orientation must be verified on first solve.
 - The EED scalar field φ is NOT the standard EM scalar potential. The weak form in

@@ -213,3 +213,11 @@ largest, so lab sensors can be positioned optimally. Key EED signatures to look 
 - **2025-05-25** S_φ from ∇·J not from ∇·A — in the static limit these are
   equivalent (up to a factor) but computing from J directly avoids a
   two-stage solve.
+- **2026-05-25** α, β, γ are free parameters constrained by experiment, not derived
+  from first principles. α in units 1/m (Yukawa decay length λ=1/α). β, γ
+  dimensionless. All three exposed as UI sliders for parameter sweeps.
+- **2026-05-25** β/γ coupling term structure in eed_coupled implemented as documented.
+  Marked TODO: VERIFY AGAINST DDOF PAPER — pending full citation from Max.
+- **2026-05-25** Coil types expanded: solenoid, toroid (azimuthal winding),
+  toroid_poloidal (poloidal winding — key EED test: confines B but not φ),
+  flat_spiral, rodin (Rodin/Marko coil — figure-8 toroid winding).

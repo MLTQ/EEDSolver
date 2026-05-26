@@ -1,0 +1,18 @@
+services:
+  solver:
+    build:
+      context: .
+      dockerfile: solver/Dockerfile
+    ports:
+      - "7432:7432"
+    volumes:
+      # Mount solver source for hot reload during development
+      - ./solver:/app/solver
+    command: >
+      uvicorn solver.main:app
+      --host 0.0.0.0
+      --port 7432
+      --reload
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
