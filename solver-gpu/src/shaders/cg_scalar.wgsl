@@ -106,7 +106,7 @@ fn cg_dot(
 ) {
     let n    = i32(params.n1);
     let flat = gid.x;
-    var val = 0.0f32;
+    var val = 0.0f;
     if flat < u32(n * n * n) { val = a_dot[flat] * b_dot[flat]; }
     wg_partial[lid] = val;
     workgroupBarrier();

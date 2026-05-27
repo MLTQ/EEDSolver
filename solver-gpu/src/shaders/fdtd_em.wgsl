@@ -132,7 +132,7 @@ fn vel_step(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Minimum distance from any domain face (in cells).
     let sc    = i32(params.sponge_cells);
     let dist  = min(min(ix, n-1-ix), min(min(iy, n-1-iy), min(iz, n-1-iz)));
-    var sponge_damp = 0.0f32;
+    var sponge_damp = 0.0f;
     if dist < sc && params.sigma_max > 0.0 {
         let t   = 1.0 - f32(dist) / f32(sc);  // 1 at wall → 0 at interior
         sponge_damp = params.sigma_max * t * t;  // quadratic profile

@@ -172,7 +172,9 @@ impl GpuGridState {
         let total = (n1 * n1 * n1) as u64;
         let dev   = ctx.device();
 
-        let storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
+        let storage = wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST;
 
         let make = |label: &str, f32_count: u64| {
             dev.create_buffer(&wgpu::BufferDescriptor {
@@ -807,7 +809,9 @@ impl GpuGridState {
         let make_s = |label: &str, sz: u64| dev.create_buffer(&wgpu::BufferDescriptor {
             label:              Some(label),
             size:               sz,
-            usage:              wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            usage:              wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let r_buf   = make_s("cg_r",   bytes);
