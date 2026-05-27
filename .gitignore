@@ -14,3 +14,5 @@ solver/geometry/__pycache__/
 solver/models/__pycache__/
 
 src-tauri/target/
+
+target/debug/
