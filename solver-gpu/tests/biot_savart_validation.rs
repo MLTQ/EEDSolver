@@ -60,6 +60,7 @@ async fn test_biot_savart_solenoid_on_axis() {
             pitch_m:       pitch_m as f64,
             wire_radius_m: wire_radius_m as f64,
             current_a:     current_a as f64,
+            ..Default::default()
         },
         position_m:    [0.0, 0.0, 0.0],
         orientation:   [0.0, 0.0, 0.0, 1.0],

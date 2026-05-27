@@ -4,7 +4,11 @@ import type {
   EedParams, FieldName, GemParams, HolonomyPath,
   SolveRequest, SolverConfig, SolverMode,
 } from "../../lib/fieldTypes";
-import { COIL_LABELS, FIELD_CHIP, PHASE1_FIELDS } from "../../lib/fieldTypes";
+import {
+  AC_CAPABLE_TYPES, CAPACITOR_TYPES, COIL_LABELS,
+  FIELD_CHIP, PHASE1_FIELDS,
+  defaultCapacitorEntity,
+} from "../../lib/fieldTypes";
 
 interface Props {
   request:  SolveRequest;
@@ -33,7 +37,11 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
 
   const addEntity = () => {
     const newE: CoilEntity = {
-      coil: { coil_type: "solenoid", radius_m: 0.05, turns: 10, pitch_m: 0.005, wire_radius_m: 0.001, current_A: 1.0 },
+      coil: {
+        coil_type: "solenoid", radius_m: 0.05, turns: 10, pitch_m: 0.005,
+        wire_radius_m: 0.001, current_A: 1.0,
+        voltage_v: 0, frequency_hz: 0, plate_gap_m: 0, plate_aspect: 5,
+      },
       position_m:    [0, 0, 0.1],
       orientation:   [0, 0, 0, 1],
       superconducting: false,
@@ -95,28 +103,139 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
         <select
           className="select-dark w-full"
           value={entity.coil.coil_type}
-          onChange={e => setCoil({ coil_type: e.target.value as CoilType })}
+          onChange={e => {
+            const t = e.target.value as CoilType;
+            // Pre-fill sensible defaults when switching to capacitor types.
+            if (CAPACITOR_TYPES.includes(t)) {
+              setCoil({
+                coil_type:   t,
+                current_A:   0,
+                voltage_v:   entity.coil.voltage_v ?? 1000,
+                plate_gap_m: entity.coil.plate_gap_m && entity.coil.plate_gap_m > 0
+                               ? entity.coil.plate_gap_m : 0.02,
+                plate_aspect: t === "capacitor_asymmetric"
+                               ? (entity.coil.plate_aspect ?? 5) : 1,
+              });
+            } else {
+              setCoil({ coil_type: t });
+            }
+          }}
         >
           {(Object.keys(COIL_LABELS) as CoilType[]).map(k => (
             <option key={k} value={k}>{COIL_LABELS[k]}</option>
           ))}
         </select>
-        <button
-          onClick={addEntity}
-          className="text-xs text-slate-500 hover:text-slate-300 text-left mt-0.5"
-        >
-          + Add coil
-        </button>
+
+        {/* Coil type description */}
+        {entity.coil.coil_type === "open_helix" && (
+          <div className="text-xs text-amber-600/80 mt-0.5">
+            Non-closed wire — charge at tips → φ ≠ 0 with AC drive
+          </div>
+        )}
+        {entity.coil.coil_type === "capacitor_symmetric" && (
+          <div className="text-xs text-sky-600/80 mt-0.5">
+            Parallel plate capacitor — uniform E between plates
+          </div>
+        )}
+        {entity.coil.coil_type === "capacitor_asymmetric" && (
+          <div className="text-xs text-violet-600/80 mt-0.5">
+            TTB asymmetric — large plate + pointed electrode → non-uniform φ
+          </div>
+        )}
+
+        <div className="flex gap-1.5 mt-0.5 flex-wrap">
+          <button
+            onClick={addEntity}
+            className="text-xs text-slate-500 hover:text-slate-300 text-left"
+          >
+            + Add coil
+          </button>
+          <button
+            onClick={() => {
+              const cap = defaultCapacitorEntity(true);
+              cap.position_m = [0, 0, 0.05];
+              set({ entities: [...request.entities, cap] });
+              setActiveEntity(request.entities.length);
+            }}
+            className="text-xs text-sky-700 hover:text-sky-400"
+          >
+            + Add capacitor
+          </button>
+        </div>
       </Section>
 
       {/* ── Geometry ──────────────────────────────────────────────────── */}
-      <Section label="Geometry">
-        <Slider label="Radius"   unit="m"  value={entity.coil.radius_m}     min={0.005} max={0.5}   step={0.005} onChange={v => setCoil({ radius_m: v })} />
-        <Slider label="Turns"    unit=""   value={entity.coil.turns}         min={1}     max={100}   step={1}     onChange={v => setCoil({ turns: Math.round(v) })} />
-        <Slider label="Pitch"    unit="m"  value={entity.coil.pitch_m}       min={0.001} max={0.05}  step={0.001} onChange={v => setCoil({ pitch_m: v })} />
-        <Slider label="Wire r"   unit="m"  value={entity.coil.wire_radius_m} min={0.0002} max={0.005} step={0.0002} onChange={v => setCoil({ wire_radius_m: v })} fmt={v => v.toFixed(4)} />
-        <Slider label="Current"  unit="A"  value={entity.coil.current_A}     min={0.1}   max={1000}  step={0.5}   onChange={v => setCoil({ current_A: v })} />
-      </Section>
+      {(() => {
+        const isCap = CAPACITOR_TYPES.includes(entity.coil.coil_type);
+        const isAC  = AC_CAPABLE_TYPES.includes(entity.coil.coil_type);
+        const isAsym = entity.coil.coil_type === "capacitor_asymmetric";
+        return (
+          <Section label="Geometry">
+            <Slider label="Radius" unit="m" value={entity.coil.radius_m}
+              min={0.005} max={0.5} step={0.005}
+              onChange={v => setCoil({ radius_m: v })}
+              hint={isCap ? (isAsym ? "Large electrode radius" : "Plate radius") : undefined}
+            />
+            {!isCap && (
+              <>
+                <Slider label="Turns"  unit=""  value={entity.coil.turns}
+                  min={1} max={100} step={1}
+                  onChange={v => setCoil({ turns: Math.round(v) })} />
+                <Slider label="Pitch"  unit="m" value={entity.coil.pitch_m}
+                  min={0.001} max={0.05} step={0.001}
+                  onChange={v => setCoil({ pitch_m: v })} />
+                <Slider label="Wire r" unit="m" value={entity.coil.wire_radius_m}
+                  min={0.0002} max={0.005} step={0.0002} fmt={v => v.toFixed(4)}
+                  onChange={v => setCoil({ wire_radius_m: v })} />
+              </>
+            )}
+
+            {/* Capacitor-specific controls */}
+            {isCap && (
+              <>
+                <Slider label="Plate gap" unit="m" value={entity.coil.plate_gap_m ?? 0.02}
+                  min={0.005} max={0.2} step={0.005}
+                  onChange={v => setCoil({ plate_gap_m: v })}
+                />
+                {isAsym && (
+                  <Slider label="Asymmetry" unit="×" value={entity.coil.plate_aspect ?? 5}
+                    min={1} max={20} step={0.5} fmt={v => v.toFixed(1)}
+                    onChange={v => setCoil({ plate_aspect: v })}
+                    hint="Large/small electrode radius ratio"
+                  />
+                )}
+                <Slider label="Voltage V" unit="V" value={entity.coil.voltage_v ?? 0}
+                  min={0} max={50000} step={100}
+                  onChange={v => setCoil({ voltage_v: v })}
+                />
+              </>
+            )}
+
+            {/* Current source (non-capacitor) */}
+            {!isCap && (
+              <Slider label="Current" unit="A" value={entity.coil.current_A}
+                min={0.1} max={1000} step={0.5}
+                onChange={v => setCoil({ current_A: v })} />
+            )}
+
+            {/* AC frequency (for current-carrying types) */}
+            {isAC && (
+              <Slider
+                label="Frequency" unit="Hz"
+                value={entity.coil.frequency_hz ?? 0}
+                min={0} max={1e9} step={1e6}
+                fmt={v => v === 0 ? "DC" : v >= 1e9 ? `${(v/1e9).toFixed(2)} GHz`
+                          : v >= 1e6 ? `${(v/1e6).toFixed(1)} MHz`
+                          : v >= 1e3 ? `${(v/1e3).toFixed(1)} kHz` : `${v.toFixed(0)} Hz`}
+                onChange={v => setCoil({ frequency_hz: v })}
+                hint={entity.coil.frequency_hz ?? 0 > 0
+                  ? "AC — J(t) injected each FDTD step; φ≠0 from EED coupling"
+                  : "DC — static source (no AC injection)"}
+              />
+            )}
+          </Section>
+        );
+      })()}
 
       {/* ── Superconducting toggle (for Li-Torr GEM) ──────────────────── */}
       <Toggle

@@ -12,7 +12,13 @@ export type CoilType =
   | "toroid"
   | "toroid_poloidal"
   | "flat_spiral"
-  | "rodin";
+  | "rodin"
+  /** Open-ended helix — non-closed wire; charge accumulates at tips when AC-driven. */
+  | "open_helix"
+  /** Symmetric parallel-plate capacitor — produces uniform φ gradient between plates. */
+  | "capacitor_symmetric"
+  /** TTB asymmetric capacitor — large plate + small electrode; non-uniform φ and E. */
+  | "capacitor_asymmetric";
 
 export type SliceAxis = "x" | "y" | "z";
 
@@ -46,6 +52,14 @@ export interface CoilParams {
   pitch_m:       number;
   wire_radius_m: number;
   current_A:     number;
+  /** Electrode/plate voltage [V]. Used by capacitor types. */
+  voltage_v?:    number;
+  /** AC drive frequency [Hz]. 0 = DC. Applies to current-carrying types. */
+  frequency_hz?: number;
+  /** Capacitor plate separation [m]. Defaults to 2 × pitch_m if 0. */
+  plate_gap_m?:  number;
+  /** TTB asymmetry ratio (large_radius / small_radius). Default 5. */
+  plate_aspect?: number;
 }
 
 /** One current-carrying entity in the simulation. */
@@ -166,6 +180,13 @@ export interface SolveResult {
   /** ∫ A·B d³x  [V·s·T·m²] — non-zero for linked magnetic structures. */
   magnetic_helicity: number;
   warnings:          string[];
+  /**
+   * Lead attachment points per entity: [start_m, end_m] pairs.
+   * For wire sources: the two physical wire endpoints [m].
+   * For capacitors: [anode_center_m, cathode_center_m].
+   * Rendered as markers in the 3-D viewer.
+   */
+  lead_points:       [[number,number,number],[number,number,number]][];
 }
 
 export interface SolverStatus {
@@ -225,12 +246,26 @@ export const FIELD_UNITS: Partial<Record<FieldName, string>> = {
 };
 
 export const COIL_LABELS: Record<CoilType, string> = {
-  solenoid:        "Solenoid",
-  toroid:          "Toroid (azimuthal)",
-  toroid_poloidal: "Toroid (poloidal)",
-  flat_spiral:     "Flat spiral",
-  rodin:           "Rodin coil",
+  solenoid:             "Solenoid",
+  toroid:               "Toroid (azimuthal)",
+  toroid_poloidal:      "Toroid (poloidal)",
+  flat_spiral:          "Flat spiral",
+  rodin:                "Rodin coil",
+  open_helix:           "Open helix (AC/EED)",
+  capacitor_symmetric:  "Capacitor — symmetric",
+  capacitor_asymmetric: "Capacitor — TTB asymmetric",
 };
+
+/** Coil types that use voltage instead of current. */
+export const CAPACITOR_TYPES: CoilType[] = [
+  "capacitor_symmetric",
+  "capacitor_asymmetric",
+];
+
+/** Coil types that support AC drive frequency. */
+export const AC_CAPABLE_TYPES: CoilType[] = [
+  "solenoid", "open_helix", "flat_spiral", "rodin",
+];
 
 /** Fields available after Phase 1-4 solve.
  *  GEM fields (phi_g) only appear in time-domain mode with GEM enabled. */
@@ -259,6 +294,31 @@ export function defaultCoilEntity(): CoilEntity {
       pitch_m:       0.005,
       wire_radius_m: 0.001,
       current_A:     1.0,
+      voltage_v:     0.0,
+      frequency_hz:  0.0,
+      plate_gap_m:   0.0,
+      plate_aspect:  5.0,
+    },
+    position_m:      [0, 0, 0],
+    orientation:     [0, 0, 0, 1],
+    superconducting: false,
+  };
+}
+
+/** Default capacitor entity preset. */
+export function defaultCapacitorEntity(symmetric: boolean): CoilEntity {
+  return {
+    coil: {
+      coil_type:     symmetric ? "capacitor_symmetric" : "capacitor_asymmetric",
+      radius_m:      0.05,
+      turns:         1,
+      pitch_m:       0.005,
+      wire_radius_m: 0.001,
+      current_A:     0.0,
+      voltage_v:     1000.0,   // 1 kV
+      frequency_hz:  0.0,
+      plate_gap_m:   0.02,     // 2 cm gap
+      plate_aspect:  symmetric ? 1.0 : 5.0,
     },
     position_m:      [0, 0, 0],
     orientation:     [0, 0, 0, 1],

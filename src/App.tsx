@@ -209,6 +209,7 @@ export default function App() {
               maxima={result?.maxima ?? []}
               entity={request.entities[0]}
               domainRadius={request.solver.domain_radius_m}
+              leadPoints={result?.lead_points}
             />
           </div>
 

@@ -25,6 +25,20 @@ pub enum CoilType {
     ToroidPoloidal,
     FlatSpiral,
     Rodin,
+    /// Open-ended helical wire (non-closed).
+    /// Current flows from one tip to the other — charge accumulates at the
+    /// endpoints, producing ∇·J ≠ 0 and thus a non-zero φ field, especially
+    /// when driven with AC (frequency_hz > 0).
+    OpenHelix,
+    /// Symmetric parallel-plate capacitor.
+    /// Two circular plates separated by `plate_gap_m`, charged to ±voltage_v/2.
+    /// Produces a uniform φ gradient between the plates (Coulomb scalar mode).
+    CapacitorSymmetric,
+    /// Townsend-Brown asymmetric capacitor.
+    /// Large plate (radius = radius_m) + small pointed electrode
+    /// (radius = radius_m / plate_aspect).  The asymmetric geometry creates
+    /// non-uniform φ and asymmetric E, the canonical TTB configuration.
+    CapacitorAsymmetric,
 }
 
 /// A single current-carrying entity in the simulation.
@@ -61,7 +75,33 @@ pub struct CoilParams {
     pub wire_radius_m: f64,
     #[serde(rename = "current_A")]
     pub current_a:     f64,
+
+    // ── New source parameters ────────────────────────────────────────────────
+
+    /// Electrode voltage [V].  Used by capacitor types (CapacitorSymmetric,
+    /// CapacitorAsymmetric) to set the plate potential difference.
+    /// For current-carrying sources, leave at 0.
+    #[serde(default)]
+    pub voltage_v: f64,
+
+    /// AC drive frequency [Hz].  0 = DC (static or initial condition only).
+    /// When > 0 with time-domain FDTD, the current source is injected as
+    /// J(t) = current_a × sin(2π · frequency_hz · t) each FDTD step.
+    #[serde(default)]
+    pub frequency_hz: f64,
+
+    /// Plate separation [m] for capacitor types.  Defaults to 2 × pitch_m.
+    #[serde(default)]
+    pub plate_gap_m: f64,
+
+    /// Asymmetry ratio for CapacitorAsymmetric: large_electrode_radius /
+    /// small_electrode_radius.  1.0 = symmetric (same as CapacitorSymmetric).
+    /// Typical TTB value: 5–20.
+    #[serde(default = "default_plate_aspect")]
+    pub plate_aspect: f64,
 }
+
+fn default_plate_aspect() -> f64 { 5.0 }
 
 impl Default for CoilParams {
     fn default() -> Self {
@@ -72,6 +112,10 @@ impl Default for CoilParams {
             pitch_m:       0.005,
             wire_radius_m: 0.001,
             current_a:     1.0,
+            voltage_v:     0.0,
+            frequency_hz:  0.0,
+            plate_gap_m:   0.0,
+            plate_aspect:  5.0,
         }
     }
 }
@@ -359,6 +403,11 @@ pub struct SolveResult {
     /// Non-zero for linked magnetic structures (toroidal solenoids, etc.).
     pub magnetic_helicity: f64,
     pub warnings:     Vec<String>,
+    /// Lead attachment points per entity: [[start_m, end_m]; n_entities].
+    /// For wire sources: the two physical endpoints of the conductor.
+    /// For capacitor sources: [anode_center_m, cathode_center_m].
+    /// Frontend can render these as electrode markers in the 3-D viewer.
+    pub lead_points:  Vec<[[f64; 3]; 2]>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

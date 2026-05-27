@@ -119,6 +119,16 @@ pub struct CgParamsGpu {
     pub _pad:  [u32; 3],
 }
 
+/// Uniform params for the J-source injection kernel.
+/// Must match `InjectParams` in `inject_j.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct InjectParamsGpu {
+    pub source_amp: f32,  // −dt · μ₀c² · I₀ · sin(ωt)
+    pub n1:         u32,
+    pub _pad:       [u32; 2],
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GpuGridState
 // ─────────────────────────────────────────────────────────────────────────────
@@ -135,6 +145,10 @@ pub struct CgParamsGpu {
 /// - `b_vec`:   4 × f32  — [Bx, By, Bz, 0] [T] (derived)
 /// - `c_fld`:   1 × f32  — C = ∇·A + (1/c²)·∂φ/∂t [1/m] (derived)
 /// - `c_fld_prev`: 1 × f32 — C from previous step (for ∂C/∂t in GEM)
+///
+/// AC source:
+/// - `j_src`:   4 × f32  — [Jx, Jy, Jz, 0] normalised current density [A/m²]
+///              for I₀ = 1A.  Set to zero for DC-only sources.
 ///
 /// GEM gravitational sector (Phase 4):
 /// - `phi_g`:      1 × f32  — gravitational scalar Φ_g [m²/s²]
@@ -155,6 +169,8 @@ pub struct GpuGridState {
     pub b_vec:       wgpu::Buffer,
     pub c_fld:       wgpu::Buffer,
     pub c_fld_prev:  wgpu::Buffer,
+    // AC source (4 × f32: Jx, Jy, Jz, pad)
+    pub j_src:       wgpu::Buffer,
     // GEM
     pub phi_g:       wgpu::Buffer,
     pub a_g_vec:     wgpu::Buffer,
@@ -201,6 +217,8 @@ impl GpuGridState {
             b_vec:      make("b_vec",      total * 4),
             c_fld:      make("c_fld",      total),
             c_fld_prev: make("c_fld_prev", total),
+            // AC source buffer (zero-initialised; filled by upload_j_source)
+            j_src:      make("j_src",      total * 4),
             // GEM sector
             phi_g:      make("phi_g",      total),
             a_g_vec:    make("a_g_vec",    total * 4),
@@ -430,6 +448,161 @@ impl GpuGridState {
     /// Total number of f32 values in the vector field buffers (n1³ × 4).
     pub fn vec_len(&self) -> usize { self.scalar_len() * 4 }
 
+    // ── AC source ─────────────────────────────────────────────────────────────
+
+    /// Upload a normalised current-density grid to `j_src`.
+    ///
+    /// `j_data` must be a flat array of length n1³ × 4 ([Jx, Jy, Jz, 0] per vertex)
+    /// with J normalised for I₀ = 1 A.  Obtained from `biot::segments_to_j_grid()`.
+    ///
+    /// After this call, `run_fdtd_ac` will inject the J source at every FDTD step
+    /// scaled by the instantaneous current amplitude I₀ · sin(ωt).
+    pub fn upload_j_source(
+        &self,
+        ctx:    &GpuContext,
+        j_data: &[f32],
+    ) {
+        let dev   = ctx.device();
+        let bytes = (j_data.len() as u64) * 4;
+        let stg   = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:    Some("j_src_upload"),
+            contents: cast_slice(j_data),
+            usage:    wgpu::BufferUsages::COPY_SRC,
+        });
+        let mut enc = dev.create_command_encoder(&Default::default());
+        enc.copy_buffer_to_buffer(&stg, 0, &self.j_src, 0, bytes);
+        ctx.queue().submit([enc.finish()]);
+        dev.poll(wgpu::MaintainBase::Wait);
+        log::debug!("Uploaded j_src: {} f32 values", j_data.len());
+    }
+
+    // ── Capacitor φ initialisation ────────────────────────────────────────────
+
+    /// Initialise `phi` analytically for capacitor entity types.
+    ///
+    /// For `CapacitorSymmetric`: linear φ between the plates, zero outside.
+    /// For `CapacitorAsymmetric`: point-dipole approximation (±Q at electrode
+    /// centres), scaled to give the requested voltage across the gap.
+    ///
+    /// # Arguments
+    /// * `entity`    — the capacitor entity (position, orientation, params)
+    /// * `grid`      — Yee grid for coordinate mapping
+    pub fn initialize_phi_capacitor(
+        &self,
+        ctx:    &GpuContext,
+        grid:   &YeeGrid,
+        entity: &crate::types::CoilEntity,
+    ) {
+        use crate::types::CoilType;
+
+        let c    = &entity.coil;
+        let n1   = self.n1 as usize;
+        let dx   = grid.dx;
+        let r    = grid.extent;
+
+        let gap  = if c.plate_gap_m > 0.0 { c.plate_gap_m } else { 2.0 * c.pitch_m };
+        let half_gap = gap * 0.5;
+        let v    = c.voltage_v;
+        let pos  = entity.position_m;
+
+        let mut phi_data = vec![0.0f32; n1 * n1 * n1];
+
+        match c.coil_type {
+            CoilType::CapacitorSymmetric => {
+                // Linear φ between plates, ±V/2 at the plates.
+                // Ignore orientation for simplicity (plates ⊥ Z).
+                for iz in 0..n1 {
+                    let z = -r + iz as f64 * dx - pos[2];
+                    let phi_z = if z >= -half_gap && z <= half_gap {
+                        // Linearly interpolate: −V/2 at z=−gap/2, +V/2 at z=+gap/2
+                        (v / gap) * z
+                    } else if z > half_gap {
+                        v * 0.5
+                    } else {
+                        -v * 0.5
+                    };
+                    // Plate radius mask (optional — full-width approximation if zero)
+                    let plate_r2 = if c.radius_m > 0.0 { c.radius_m * c.radius_m } else { 1e10 };
+                    for iy in 0..n1 {
+                        let y = -r + iy as f64 * dx - pos[1];
+                        for ix in 0..n1 {
+                            let x = -r + ix as f64 * dx - pos[0];
+                            let rho2 = x*x + y*y;
+                            // Apply radial mask only outside plate region
+                            let phi_val = if rho2 <= plate_r2 {
+                                phi_z
+                            } else {
+                                // Outside the plate radius: decay as if a disc dipole field
+                                // Simplified: cosine-weighted drop-off
+                                let decay = (plate_r2 / rho2).min(1.0);
+                                phi_z * decay
+                            };
+                            phi_data[ix + iy * n1 + iz * n1 * n1] = phi_val as f32;
+                        }
+                    }
+                }
+            }
+            CoilType::CapacitorAsymmetric => {
+                // Dipole approximation: +Q at anode (z = +gap/2, small electrode),
+                // −Q at cathode (z = −gap/2, large plate).
+                // Q is chosen so V(small_elec) − V(large_plate) ≈ voltage_v.
+                // Effective: use two-point-charge superposition scaled to give V across gap.
+                let small_r = c.radius_m / c.plate_aspect.max(1.0);
+                let large_r = c.radius_m;
+
+                // Coulomb constant k = 1/(4πε₀) ≈ 8.988e9 V·m/C
+                const K_COULOMB: f64 = 8.9875e9;
+                // Charge needed: V ≈ k·Q/small_r − k·Q/gap → Q = V / (k·(1/small_r − 1/gap))
+                let denom = K_COULOMB * (1.0 / small_r - 1.0 / gap);
+                let q_eff = if denom.abs() > 1e-30 { v / denom } else { 0.0 };
+
+                let anode_z   =  half_gap + pos[2];
+                let cathode_z = -half_gap + pos[2];
+
+                for iz in 0..n1 {
+                    let z = -r + iz as f64 * dx;
+                    for iy in 0..n1 {
+                        let y = -r + iy as f64 * dx - pos[1];
+                        for ix in 0..n1 {
+                            let x = -r + ix as f64 * dx - pos[0];
+                            let d_anode2   = x*x + y*y + (z - anode_z)*(z - anode_z);
+                            let d_cathode2 = x*x + y*y + (z - cathode_z)*(z - cathode_z);
+                            let da = d_anode2.sqrt().max(small_r);
+                            let dc = d_cathode2.sqrt().max(large_r * 0.5);
+                            let phi_val = K_COULOMB * q_eff * (1.0 / da - 1.0 / dc);
+                            phi_data[ix + iy * n1 + iz * n1 * n1] = phi_val as f32;
+                        }
+                    }
+                }
+            }
+            _ => {
+                log::warn!("initialize_phi_capacitor called for non-capacitor type — no-op");
+                return;
+            }
+        }
+
+        // Upload phi_data to GPU phi buffer.
+        let dev = ctx.device();
+        let stg = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:    Some("phi_cap_upload"),
+            contents: cast_slice(&phi_data),
+            usage:    wgpu::BufferUsages::COPY_SRC,
+        });
+        let byte_size = (phi_data.len() as u64) * 4;
+        let mut enc = dev.create_command_encoder(&Default::default());
+        enc.copy_buffer_to_buffer(&stg, 0, &self.phi, 0, byte_size);
+        ctx.queue().submit([enc.finish()]);
+        dev.poll(wgpu::MaintainBase::Wait);
+
+        log::info!(
+            "Capacitor φ init: type={:?}, V={:.2}V, gap={:.3}m → peak|φ|={:.3}V",
+            c.coil_type,
+            v,
+            gap,
+            phi_data.iter().map(|v| v.abs()).fold(0.0f32, f32::max),
+        );
+    }
+
     // ── Phase 3: FDTD time-domain ─────────────────────────────────────────────
 
     /// Run `n_steps` FDTD leapfrog iterations.
@@ -592,6 +765,205 @@ impl GpuGridState {
 
         log::info!("FDTD: {n_steps} steps × dt={:.3e} s  (sim time {:.3e} s)",
             dt, n_steps as f32 * dt);
+        Ok(())
+    }
+
+    /// Run AC-driven FDTD: injects time-varying J(t) = J₀ · I₀ · sin(ωt) each step.
+    ///
+    /// Requires `upload_j_source()` to have been called first.
+    /// For DC (frequency_hz = 0) this reduces to a constant-amplitude injection each step.
+    ///
+    /// The `inject_j` pass runs before each `vel_step` / `pos_step` pair so the
+    /// external current drives the leapfrog correctly.
+    ///
+    /// # Arguments
+    /// * `current_a`    — peak current amplitude I₀ [A]
+    /// * `frequency_hz` — AC frequency [Hz]; 0 = DC (constant injection)
+    /// * `t_start_s`    — simulation time at the start of this call [s]
+    pub fn run_fdtd_ac(
+        &self,
+        ctx:          &GpuContext,
+        grid:         &YeeGrid,
+        dt:           f32,
+        n_steps:      u32,
+        gamma:        f32,
+        sigma_max:    Option<f32>,
+        current_a:    f32,
+        frequency_hz: f32,
+        t_start_s:    f32,
+    ) -> Result<(), SolverError> {
+        if n_steps == 0 { return Ok(()); }
+
+        // μ₀c² = 1/ε₀ ≈ 1.1294 × 10¹¹ V·m/A
+        const MU0_C2: f32 = 1.1294e11;
+
+        const C: f32   = 2.998e8_f32;
+        const C2: f32  = C * C;
+        const INV_C2: f32 = 1.0 / C2;
+
+        let dev  = ctx.device();
+        let n1   = self.n1;
+
+        // Build FDTD pipelines (same as run_fdtd_sponge).
+        let em_shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label:  Some("fdtd_em_ac"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/fdtd_em.wgsl").into()),
+        });
+        let vel_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("fdtd_vel_ac"), layout: None, module: &em_shader,
+            entry_point: "vel_step",
+            compilation_options: Default::default(), cache: None,
+        });
+        let pos_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("fdtd_pos_ac"), layout: None, module: &em_shader,
+            entry_point: "pos_step",
+            compilation_options: Default::default(), cache: None,
+        });
+        let cf_shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label:  Some("c_field_ac"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/c_field.wgsl").into()),
+        });
+        let cf_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("c_field_update_ac"), layout: None, module: &cf_shader,
+            entry_point: "update_c",
+            compilation_options: Default::default(), cache: None,
+        });
+
+        // inject_j pipeline.
+        let inj_shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label:  Some("inject_j"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/inject_j.wgsl").into()),
+        });
+        let inj_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("inject_j_pl"), layout: None, module: &inj_shader,
+            entry_point: "inject_j",
+            compilation_options: Default::default(), cache: None,
+        });
+
+        // FDTD params (constant across all steps).
+        let sponge_cells = (n1 / 8).max(4);
+        let sigma_max_v  = sigma_max.unwrap_or_else(|| (2.998e8f32 / grid.dx as f32) * 0.25);
+        let fdtd_params  = FdtdParamsGpu {
+            dx: grid.dx as f32, dt, n1, gamma,
+            sponge_cells, sigma_max: sigma_max_v, _pad: [0; 2],
+        };
+        let fdtd_params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("fdtd_params_ac"), contents: bytes_of(&fdtd_params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let cf_params = CFieldParamsGpu { dx: grid.dx as f32, inv_c2: INV_C2, n1, _pad: 0 };
+        let cf_params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("cf_params_ac"), contents: bytes_of(&cf_params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        // Inject params buffer — source_amp updated each step.
+        let inj_params_buf = dev.create_buffer(&wgpu::BufferDescriptor {
+            label:              Some("inj_params"),
+            size:               std::mem::size_of::<InjectParamsGpu>() as u64,
+            usage:              wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Build bind groups.
+        let em_bg = |layout: &wgpu::BindGroupLayout| {
+            dev.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("fdtd_em_bg_ac"), layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: self.phi.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: self.a_vec.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: self.phi_vel.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: self.a_vel.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 4, resource: fdtd_params_buf.as_entire_binding() },
+                ],
+            })
+        };
+        let vel_bg = em_bg(&vel_pipeline.get_bind_group_layout(0));
+        let pos_bg = em_bg(&pos_pipeline.get_bind_group_layout(0));
+
+        let cf_bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("cf_bg_ac"), layout: &cf_pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.a_vec.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.phi_vel.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: self.c_fld.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: cf_params_buf.as_entire_binding() },
+            ],
+        });
+
+        let inj_bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("inj_bg"), layout: &inj_pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.j_src.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.a_vel.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: inj_params_buf.as_entire_binding() },
+            ],
+        });
+
+        let wg      = (n1 * n1 * n1).div_ceil(256);
+        let c_bytes = (self.scalar_len() * 4) as u64;
+        let omega   = 2.0 * std::f32::consts::PI * frequency_hz;
+
+        // Step-by-step FDTD with per-step source amplitude update.
+        for step in 0..n_steps {
+            let t = t_start_s + step as f32 * dt;
+            let amplitude = if frequency_hz > 0.0 { (omega * t).sin() } else { 1.0 };
+
+            // source_amp = −dt · μ₀c² · I₀ · sin(ωt)
+            let source_amp = -dt * MU0_C2 * current_a * amplitude;
+            let inj_p = InjectParamsGpu { source_amp, n1, _pad: [0; 2] };
+            ctx.queue().write_buffer(&inj_params_buf, 0, bytes_of(&inj_p));
+
+            let mut enc = dev.create_command_encoder(&Default::default());
+
+            // Snapshot c_fld → c_fld_prev.
+            enc.copy_buffer_to_buffer(&self.c_fld, 0, &self.c_fld_prev, 0, c_bytes);
+
+            // Inject J source into a_vel.
+            {
+                let mut pass = enc.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&inj_pipeline);
+                pass.set_bind_group(0, &inj_bg, &[]);
+                pass.dispatch_workgroups(wg, 1, 1);
+            }
+
+            // vel_step: update EM velocities.
+            {
+                let mut pass = enc.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&vel_pipeline);
+                pass.set_bind_group(0, &vel_bg, &[]);
+                pass.dispatch_workgroups(wg, 1, 1);
+            }
+
+            // pos_step: update EM positions.
+            {
+                let mut pass = enc.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&pos_pipeline);
+                pass.set_bind_group(0, &pos_bg, &[]);
+                pass.dispatch_workgroups(wg, 1, 1);
+            }
+
+            ctx.queue().submit([enc.finish()]);
+            dev.poll(wgpu::MaintainBase::Wait);
+        }
+
+        // Update C-field after all steps.
+        {
+            let mut enc = dev.create_command_encoder(&Default::default());
+            let mut pass = enc.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&cf_pipeline);
+            pass.set_bind_group(0, &cf_bg, &[]);
+            pass.dispatch_workgroups(wg, 1, 1);
+            drop(pass);
+            ctx.queue().submit([enc.finish()]);
+            dev.poll(wgpu::MaintainBase::Wait);
+        }
+
+        log::info!(
+            "AC FDTD: {n_steps} steps × dt={:.3e}s, f={:.2}Hz, I₀={:.3}A",
+            dt, frequency_hz, current_a
+        );
         Ok(())
     }
 

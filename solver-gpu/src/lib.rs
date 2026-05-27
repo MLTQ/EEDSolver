@@ -87,13 +87,31 @@ impl OracleSolver {
 
         // ── Phase 1: Biot-Savart ─────────────────────────────────────────────
         // Convert all coil entities to GPU wire segments.
+        // Capacitor entities produce no wire segments (φ is initialised below).
         let segments: Vec<biot::WireSegment> = request.entities.iter()
             .flat_map(|e| biot::entity_to_segments(e))
             .collect();
 
-        log::info!("Total wire segments: {}", segments.len());
+        // Collect lead attachment points per entity for the frontend.
+        let lead_points: Vec<[[f64; 3]; 2]> = request.entities.iter()
+            .map(|e| biot::entity_lead_points(e))
+            .collect();
 
-        if segments.is_empty() {
+        // Collect AC-driven wire segments for J-grid computation.
+        // Any entity with frequency_hz > 0 participates in AC injection.
+        let ac_segments: Vec<biot::WireSegment> = request.entities.iter()
+            .filter(|e| e.coil.frequency_hz > 0.0)
+            .flat_map(|e| biot::entity_to_segments(e))
+            .collect();
+
+        log::info!("Total wire segments: {} (AC: {})", segments.len(), ac_segments.len());
+
+        if segments.is_empty() && request.entities.iter().all(|e| {
+            matches!(e.coil.coil_type, CoilType::CapacitorSymmetric | CoilType::CapacitorAsymmetric)
+        }) {
+            // All-capacitor configuration: no Biot-Savart needed, normal.
+            log::info!("Capacitor-only configuration: skipping Biot-Savart");
+        } else if segments.is_empty() {
             warnings.push(
                 "No wire segments generated — check coil parameters (radius, turns, pitch).".into()
             );
@@ -102,8 +120,31 @@ impl OracleSolver {
         // Allocate GPU field buffers.
         let mut gstate = GpuGridState::new(&self.ctx, &grid);
 
-        // Dispatch Biot-Savart → fills a_vec.
+        // Dispatch Biot-Savart → fills a_vec (skipped for zero segments).
         gstate.run_biot_savart(&self.ctx, &grid, &segments)?;
+
+        // ── Capacitor φ initialisation ────────────────────────────────────────
+        // For capacitor entities, initialise φ with the plate field.
+        // Multiple capacitors are superposed additively.
+        for entity in &request.entities {
+            match entity.coil.coil_type {
+                CoilType::CapacitorSymmetric | CoilType::CapacitorAsymmetric => {
+                    gstate.initialize_phi_capacitor(&self.ctx, &grid, entity);
+                }
+                _ => {}
+            }
+        }
+
+        // ── AC J-source upload ────────────────────────────────────────────────
+        // Pre-compute the normalised J₀ grid for AC injection (if any AC entities).
+        let has_ac = request.entities.iter().any(|e| e.coil.frequency_hz > 0.0);
+        if has_ac && !ac_segments.is_empty() {
+            let n1     = (grid.n + 1) as usize;
+            let origin = [-(grid.extent as f32); 3];
+            let j_grid = biot::segments_to_j_grid(&ac_segments, n1, grid.dx as f32, origin);
+            gstate.upload_j_source(&self.ctx, &j_grid);
+            log::info!("J-source uploaded: {} AC segments", ac_segments.len());
+        }
 
         // Dispatch field derivation → fills b_vec and c_fld.
         gstate.run_derive_fields(&self.ctx, &grid)?;
@@ -172,7 +213,27 @@ impl OracleSolver {
             // γ=0 → Lorenz gauge (Maxwell), γ=1 → full EED
             let gamma = if request.solver.lorenz_gauge { 0.0f32 }
                         else { request.eed.gamma as f32 };
-            gstate.run_fdtd(&self.ctx, &grid, dt, n_steps, gamma)?;
+
+            if has_ac {
+                // Use the first AC entity's current and frequency for the source.
+                // TODO: multi-entity AC superposition (different frequencies).
+                let ac_entity = request.entities.iter()
+                    .find(|e| e.coil.frequency_hz > 0.0)
+                    .unwrap(); // safe: has_ac guarantees at least one
+                let current_a    = ac_entity.coil.current_a as f32;
+                let frequency_hz = ac_entity.coil.frequency_hz as f32;
+                gstate.run_fdtd_ac(
+                    &self.ctx, &grid, dt, n_steps, gamma, None,
+                    current_a, frequency_hz, 0.0,
+                )?;
+                warnings.push(format!(
+                    "AC injection: f={:.2}Hz, I₀={:.3}A over {n_steps} steps",
+                    frequency_hz, current_a
+                ));
+            } else {
+                gstate.run_fdtd(&self.ctx, &grid, dt, n_steps, gamma)?;
+            }
+
             // Re-compute observables using evolved E = -∇φ - a_vel.
             gstate.run_observables(&self.ctx, &grid)?;
         }
@@ -242,6 +303,7 @@ impl OracleSolver {
             holonomies,
             magnetic_helicity,
             warnings,
+            lead_points,
         })
     }
 }

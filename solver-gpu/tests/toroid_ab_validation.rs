@@ -70,6 +70,7 @@ async fn test_toroid_ab_effect() {
             pitch_m,
             wire_radius_m: wire_r,
             current_a,
+            ..Default::default()
         },
         position_m:    [0.0, 0.0, 0.0],
         orientation:   [0.0, 0.0, 0.0, 1.0],

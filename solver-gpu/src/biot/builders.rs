@@ -41,11 +41,44 @@ pub fn entity_to_segments(entity: &CoilEntity) -> Vec<WireSegment> {
 fn build_path(e: &CoilEntity) -> Vec<[f64; 3]> {
     let c = &e.coil;
     match c.coil_type {
-        CoilType::Solenoid       => solenoid(c.radius_m, c.turns, c.pitch_m),
-        CoilType::Toroid         => toroid(c.radius_m, c.turns, c.pitch_m),
-        CoilType::ToroidPoloidal => toroid_poloidal(c.radius_m, c.turns, c.pitch_m),
-        CoilType::FlatSpiral     => flat_spiral(c.radius_m, c.turns, c.pitch_m),
-        CoilType::Rodin          => rodin(c.radius_m, c.turns, c.pitch_m),
+        CoilType::Solenoid            => solenoid(c.radius_m, c.turns, c.pitch_m),
+        CoilType::Toroid              => toroid(c.radius_m, c.turns, c.pitch_m),
+        CoilType::ToroidPoloidal      => toroid_poloidal(c.radius_m, c.turns, c.pitch_m),
+        CoilType::FlatSpiral          => flat_spiral(c.radius_m, c.turns, c.pitch_m),
+        CoilType::Rodin               => rodin(c.radius_m, c.turns, c.pitch_m),
+        CoilType::OpenHelix           => open_helix(c.radius_m, c.turns, c.pitch_m),
+        // Capacitor types carry no current → Biot-Savart is zero.
+        // Their φ field is initialised separately by `initialize_phi_capacitor`.
+        CoilType::CapacitorSymmetric  => vec![],
+        CoilType::CapacitorAsymmetric => vec![],
+    }
+}
+
+/// Return the two physical lead attachment points for an entity [m].
+/// For current sources: [wire_start, wire_end].
+/// For capacitors: [anode_center, cathode_center].
+pub fn entity_lead_points(entity: &CoilEntity) -> [[f64; 3]; 2] {
+    let raw = build_path(entity);
+    let c   = &entity.coil;
+
+    let gap = if c.plate_gap_m > 0.0 { c.plate_gap_m } else { 2.0 * c.pitch_m };
+    match c.coil_type {
+        CoilType::CapacitorSymmetric | CoilType::CapacitorAsymmetric => {
+            // Anode (top, +V/2) and cathode (bottom, −V/2).
+            let anode   = transform([0.0, 0.0,  gap * 0.5], entity.position_m, entity.orientation);
+            let cathode = transform([0.0, 0.0, -gap * 0.5], entity.position_m, entity.orientation);
+            [anode.map(|v| v as f64), cathode.map(|v| v as f64)]
+        }
+        _ => {
+            // Wire source: first and last point on the path.
+            if raw.len() < 2 {
+                [entity.position_m, entity.position_m]
+            } else {
+                let p0 = transform(raw[0],           entity.position_m, entity.orientation);
+                let p1 = transform(*raw.last().unwrap(), entity.position_m, entity.orientation);
+                [p0.map(|v| v as f64), p1.map(|v| v as f64)]
+            }
+        }
     }
 }
 
@@ -176,6 +209,23 @@ fn rodin(radius: f64, turns: u32, pitch: f64) -> Vec<[f64; 3]> {
             [rho * phi.cos(), rho * phi.sin(), r * th.sin()]
         })
         .collect()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Open helix — like a solenoid but geometrically open (non-closed)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Identical wire path to the solenoid but with a fewer turns (fewer wraps)
+// by default to keep the tips clearly separated.  The key semantic difference
+// is that this coil does NOT close back to its origin — the first and last
+// points are the physical wire tips where charge accumulates when AC-driven.
+//
+// When frequency_hz > 0 in time-domain FDTD, the oscillating current creates
+// ∇·J ≠ 0 at the tips, producing the EED electroscalar (C) mode.
+
+fn open_helix(radius: f64, turns: u32, pitch: f64) -> Vec<[f64; 3]> {
+    // Same path as solenoid — the "open" property comes from not closing the loop.
+    solenoid(radius, turns, pitch)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -24,6 +24,7 @@ fn default_solenoid() -> CoilEntity {
             pitch_m:       0.005,
             wire_radius_m: 0.001,
             current_a:     1.0,
+            ..Default::default()
         },
         position_m:    [0.0, 0.0, 0.0],
         orientation:   [0.0, 0.0, 0.0, 1.0],

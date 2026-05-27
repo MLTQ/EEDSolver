@@ -21,6 +21,8 @@ interface Props {
   maxima:        FieldMaximum[];
   entity:        CoilEntity;
   domainRadius:  number;          // meters
+  /** Lead attachment points per entity [[start_m, end_m]]. */
+  leadPoints?:   [[number,number,number],[number,number,number]][];
 }
 
 // ---------------------------------------------------------------------------
@@ -133,13 +135,39 @@ type Pt3 = [number, number, number];
 
 function buildCoilPath(p: CoilParams): Pt3[] {
   switch (p.coil_type as CoilType) {
-    case "solenoid":        return solenoidPath(p);
-    case "toroid":          return toroidPath(p);
-    case "toroid_poloidal": return toroidPoloidalPath(p);
-    case "flat_spiral":     return flatSpiralPath(p);
-    case "rodin":           return rodinPath(p);
-    default:                return [];
+    case "solenoid":
+    case "open_helix":       return solenoidPath(p);
+    case "toroid":           return toroidPath(p);
+    case "toroid_poloidal":  return toroidPoloidalPath(p);
+    case "flat_spiral":      return flatSpiralPath(p);
+    case "rodin":            return rodinPath(p);
+    case "capacitor_symmetric":
+    case "capacitor_asymmetric": return capacitorPath(p);
+    default:                 return [];
   }
+}
+
+/** Two circular discs (plate outlines) for capacitor visualisation. */
+function capacitorPath(p: CoilParams): Pt3[] {
+  const R    = p.radius_m;
+  const gap  = (p.plate_gap_m ?? 0) > 0 ? (p.plate_gap_m ?? 0.02) : 0.02;
+  const S    = 48;
+  const pts: Pt3[] = [];
+  // Top plate at z = +gap/2
+  for (let i = 0; i <= S; i++) {
+    const theta = (2 * Math.PI * i) / S;
+    pts.push([R * Math.cos(theta), R * Math.sin(theta), gap / 2]);
+  }
+  pts.push([NaN, NaN, NaN]);
+  // Small electrode at z = -gap/2 (for asymmetric, radius = R/aspect)
+  const r2 = p.coil_type === "capacitor_asymmetric"
+    ? R / Math.max(p.plate_aspect ?? 5, 1)
+    : R;
+  for (let i = 0; i <= S; i++) {
+    const theta = (2 * Math.PI * i) / S;
+    pts.push([r2 * Math.cos(theta), r2 * Math.sin(theta), -gap / 2]);
+  }
+  return pts;
 }
 
 /** Continuous helix. */
@@ -301,7 +329,7 @@ function buildCoilGroup(
 // Component
 // ---------------------------------------------------------------------------
 
-export function VolumeViewer({ volume, selectedField, isSolving, maxima, entity, domainRadius }: Props) {
+export function VolumeViewer({ volume, selectedField, isSolving, maxima, entity, domainRadius, leadPoints }: Props) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const sceneRef  = useRef<SceneState | null>(null);
   const [threshold, setThreshold] = useState(0.02);
@@ -337,20 +365,34 @@ export function VolumeViewer({ volume, selectedField, isSolving, maxima, entity,
     }
   }, [volume]);
 
+  // Helper to compute maxS and domain center from volume or domain radius
+  const getScaling = () => {
+    if (volume) {
+      const [x0, x1] = volume.x_range;
+      const [y0, y1] = volume.y_range;
+      const [z0, z1] = volume.z_range;
+      const maxS: number = Math.max(x1 - x0, y1 - y0, z1 - z0);
+      const center: [number, number, number] = [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2];
+      return { maxS, center };
+    }
+    return { maxS: 2 * domainRadius, center: [0, 0, 0] as [number, number, number] };
+  };
+
   // Update coil geometry when entity or volume bounds change
   useEffect(() => {
     const state = sceneRef.current;
     if (!state) return;
-    // Use volume bounds for exact scaling, or fall back to domainRadius
-    const maxS = volume
-      ? Math.max(
-          volume.x_range[1] - volume.x_range[0],
-          volume.y_range[1] - volume.y_range[0],
-          volume.z_range[1] - volume.z_range[0],
-        )
-      : 2 * domainRadius;
+    const { maxS } = getScaling();
     updateCoil(state, entity.coil, maxS);
   }, [entity, domainRadius, volume]);
+
+  // Update lead point markers
+  useEffect(() => {
+    const state = sceneRef.current;
+    if (!state) return;
+    const { maxS, center } = getScaling();
+    updateLeads(state, leadPoints ?? [], maxS, center);
+  }, [leadPoints, domainRadius, volume]);
 
   // Push uniform changes each frame
   useEffect(() => {
@@ -412,6 +454,21 @@ export function VolumeViewer({ volume, selectedField, isSolving, maxima, entity,
             min {fmtSI(volume.field_min, FIELD_UNITS[volume.field] ?? "")}
             &nbsp;· normalized view
           </span>
+          {/* Lead indicator chips */}
+          {leadPoints && leadPoints.length > 0 && (
+            <div className="mt-1 flex flex-col gap-0.5">
+              {leadPoints.map(([a, c], i) => (
+                <div key={i} className="flex gap-1 items-center">
+                  <span className="text-[9px] px-1 py-0.5 rounded bg-red-900/50 text-red-300 tabular-nums">
+                    +V ({a[0].toFixed(3)}, {a[1].toFixed(3)}, {a[2].toFixed(3)})m
+                  </span>
+                  <span className="text-[9px] px-1 py-0.5 rounded bg-blue-900/50 text-blue-300 tabular-nums">
+                    −V ({c[0].toFixed(3)}, {c[1].toFixed(3)}, {c[2].toFixed(3)})m
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -453,6 +510,7 @@ interface SceneState {
   material:   THREE.ShaderMaterial;
   texture:    THREE.Data3DTexture | null;
   coilGroup:  THREE.Group;
+  leadGroup:  THREE.Group;    // lead point sphere markers
   animId:     number;
 }
 
@@ -510,6 +568,11 @@ function initScene(container: HTMLDivElement): SceneState {
   coilGroup.renderOrder = 1;
   scene.add(coilGroup);
 
+  // Lead point markers — spheres at wire endpoints / plate centres
+  const leadGroup = new THREE.Group();
+  leadGroup.renderOrder = 2;
+  scene.add(leadGroup);
+
   // Resize observer
   const ro = new ResizeObserver(() => {
     const nw = container.clientWidth;
@@ -532,7 +595,7 @@ function initScene(container: HTMLDivElement): SceneState {
   }
   animate();
 
-  return { renderer, scene, camera, controls, mesh, material, texture: null, coilGroup, animId };
+  return { renderer, scene, camera, controls, mesh, material, texture: null, coilGroup, leadGroup, animId };
 }
 
 function updateVolume(state: SceneState, vol: VolumeData) {
@@ -570,6 +633,51 @@ function clearVolume(state: SceneState) {
   state.texture?.dispose();
   state.texture = null;
   state.material.uniforms.uVolume.value = null;
+}
+
+/** Render sphere markers at lead attachment points.
+ *  Anode (+): bright red.  Cathode (−): bright blue.
+ *  `domainCenter` is the physical center of the simulation box [m].
+ */
+function updateLeads(
+  state:        SceneState,
+  leadPoints:   [[number,number,number],[number,number,number]][],
+  maxS:         number,
+  domainCenter: [number,number,number],
+) {
+  state.leadGroup.clear();
+  if (!leadPoints || leadPoints.length === 0) return;
+
+  const anodeMat   = new THREE.MeshStandardMaterial({
+    color: 0xff4444, emissive: 0xff2222, emissiveIntensity: 0.8,
+    roughness: 0.2, metalness: 0.6,
+  });
+  const cathodeMat = new THREE.MeshStandardMaterial({
+    color: 0x4488ff, emissive: 0x2255ff, emissiveIntensity: 0.8,
+    roughness: 0.2, metalness: 0.6,
+  });
+
+  const sphereR = 0.018; // sphere radius in Three.js units
+  const geo = new THREE.SphereGeometry(sphereR, 12, 8);
+
+  for (const [anode, cathode] of leadPoints) {
+    // Map physical → Three.js: p3d = (p_phys - domain_center) / maxS
+    const an = new THREE.Mesh(geo, anodeMat);
+    an.position.set(
+      (anode[0] - domainCenter[0]) / maxS,
+      (anode[1] - domainCenter[1]) / maxS,
+      (anode[2] - domainCenter[2]) / maxS,
+    );
+    state.leadGroup.add(an);
+
+    const ca = new THREE.Mesh(geo, cathodeMat);
+    ca.position.set(
+      (cathode[0] - domainCenter[0]) / maxS,
+      (cathode[1] - domainCenter[1]) / maxS,
+      (cathode[2] - domainCenter[2]) / maxS,
+    );
+    state.leadGroup.add(ca);
+  }
 }
 
 function updateCoil(state: SceneState, coilParams: CoilParams, maxS: number) {

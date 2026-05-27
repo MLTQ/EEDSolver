@@ -57,6 +57,7 @@ async fn test_holonomy_solenoid() {
             pitch_m,
             wire_radius_m: 0.001,
             current_a,
+            ..Default::default()
         },
         position_m:    [0.0, 0.0, 0.0],
         orientation:   [0.0, 0.0, 0.0, 1.0],
