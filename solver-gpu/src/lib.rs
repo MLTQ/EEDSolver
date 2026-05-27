@@ -108,6 +108,11 @@ impl OracleSolver {
         // Dispatch field derivation → fills b_vec and c_fld.
         gstate.run_derive_fields(&self.ctx, &grid)?;
 
+        // ── Phase 5a: EED observables (static baseline) ──────────────────────
+        // Compute |P| and u from the static (pre-FDTD) fields.
+        // Will be re-run after FDTD to reflect the evolved E-field if needed.
+        gstate.run_observables(&self.ctx, &grid)?;
+
         // ── Phase 2: Static EED φ solver ─────────────────────────────────────
         // For closed-loop coils (solenoid, toroid, etc.) ∇·J = 0 everywhere,
         // so the rhs is zero and φ = 0 is the exact static EED solution.
@@ -141,6 +146,8 @@ impl OracleSolver {
             let gamma = if request.solver.lorenz_gauge { 0.0f32 }
                         else { request.eed.gamma as f32 };
             gstate.run_fdtd(&self.ctx, &grid, dt, n_steps, gamma)?;
+            // Re-compute observables using evolved E = -∇φ - a_vel.
+            gstate.run_observables(&self.ctx, &grid)?;
         }
 
         // ── Phase 4: GEM gravitational sector ────────────────────────────────
@@ -177,7 +184,9 @@ impl OracleSolver {
                    | FieldName::AMagnitude
                    | FieldName::CField
                    | FieldName::Phi
-                   | FieldName::PhiG) => f.clone(),
+                   | FieldName::PhiG
+                   | FieldName::PoyntingMag
+                   | FieldName::EnergyDensity) => f.clone(),
                 _ => {
                     warnings.push(format!(
                         "Volume field {:?} not yet implemented — falling back to B_magnitude.",

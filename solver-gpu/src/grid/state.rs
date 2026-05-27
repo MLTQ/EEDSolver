@@ -85,6 +85,16 @@ pub struct GemParamsGpu {
     pub kappa_g: f32,
 }
 
+/// Uniform params for the observables kernel.
+/// Must match `ObsParams` in `observables.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct ObsParamsGpu {
+    pub dx:   f32,
+    pub n1:   u32,
+    pub _pad: [u32; 2],
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GpuGridState
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,6 +117,10 @@ pub struct GemParamsGpu {
 /// - `a_g_vec`:    4 × f32  — [Agx, Agy, Agz, 0] [m/s]
 /// - `phi_g_vel`:  1 × f32  — ∂Φ_g/∂t
 /// - `a_g_vel`:    4 × f32  — ∂A_g/∂t
+///
+/// Phase 5 observables (EED energy/momentum):
+/// - `poynting_mag`: 1 × f32 — |P| = |E×B − C·E|  [W/m² in effective units]
+/// - `energy_dens`:  1 × f32 — u = ½(|E|² + |B|² + C²)  [J/m³ in effective units]
 pub struct GpuGridState {
     pub n1:          u32,
     // EM
@@ -122,6 +136,9 @@ pub struct GpuGridState {
     pub a_g_vec:     wgpu::Buffer,
     pub phi_g_vel:   wgpu::Buffer,
     pub a_g_vel:     wgpu::Buffer,
+    // Phase 5 observables
+    pub poynting_mag: wgpu::Buffer,
+    pub energy_dens:  wgpu::Buffer,
 }
 
 impl GpuGridState {
@@ -163,6 +180,9 @@ impl GpuGridState {
             a_g_vec:    make("a_g_vec",    total * 4),
             phi_g_vel:  make("phi_g_vel",  total),
             a_g_vel:    make("a_g_vel",    total * 4),
+            // Phase 5 observables
+            poynting_mag: make("poynting_mag", total),
+            energy_dens:  make("energy_dens",  total),
         }
     }
 
@@ -730,6 +750,79 @@ impl GpuGridState {
         dev.poll(wgpu::MaintainBase::Wait);
 
         log::info!("Jacobi φ: {n_iter} iterations, α²={alpha_sq:.3e}, n1={n1}");
+        Ok(())
+    }
+
+    // ── Phase 5: EED observables ──────────────────────────────────────────────
+
+    /// Compute EED modified Poynting magnitude and energy density.
+    ///
+    /// Must be called after `run_derive_fields()` (needs `b_vec`, `c_fld`)
+    /// and, for time-domain solves, after `run_fdtd()` (needs `phi`, `a_vel`).
+    ///
+    /// In static mode `a_vel` is zero (buffer initialised to 0), so
+    /// E = −∇φ and both observables reflect only the static B/C configuration.
+    ///
+    /// Fills:
+    ///   `poynting_mag` — |P| = |E×B − C·E|  per vertex
+    ///   `energy_dens`  — u = ½(|E|² + |B|² + C²)  per vertex
+    pub fn run_observables(
+        &self,
+        ctx:  &GpuContext,
+        grid: &YeeGrid,
+    ) -> Result<(), SolverError> {
+        let dev = ctx.device();
+        let n1  = self.n1;
+
+        let params = ObsParamsGpu { dx: grid.dx as f32, n1, _pad: [0; 2] };
+        let params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:    Some("obs_params"),
+            contents: bytes_of(&params),
+            usage:    wgpu::BufferUsages::UNIFORM,
+        });
+
+        let shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label:  Some("observables"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/observables.wgsl").into()
+            ),
+        });
+
+        let pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label:               Some("compute_obs"),
+            layout:              None,
+            module:              &shader,
+            entry_point:         "compute_obs",
+            compilation_options: Default::default(),
+            cache:               None,
+        });
+
+        let bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+            label:   Some("obs_bg"),
+            layout:  &pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.phi.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.a_vel.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: self.b_vec.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: self.c_fld.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: self.poynting_mag.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: self.energy_dens.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: params_buf.as_entire_binding() },
+            ],
+        });
+
+        let wg = (n1 * n1 * n1).div_ceil(256);
+        let mut enc = dev.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.dispatch_workgroups(wg, 1, 1);
+        }
+        ctx.queue().submit([enc.finish()]);
+        dev.poll(wgpu::MaintainBase::Wait);
+
+        log::info!("Observables computed: |P| and u ({} vertices)", n1 * n1 * n1);
         Ok(())
     }
 }

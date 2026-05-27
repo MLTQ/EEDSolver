@@ -37,7 +37,7 @@ pub fn extract_slices(
 }
 
 /// Compute field maxima for all populated fields.
-/// Phase 1/2: |B|, |A|, C, φ.
+/// Phase 1/2/5: |B|, |A|, C, φ, Φ_g, |P|, u.
 pub fn compute_maxima(
     ctx:    &GpuContext,
     gstate: &GpuGridState,
@@ -47,11 +47,13 @@ pub fn compute_maxima(
     let dx = grid.dx as f32;
     let r  = grid.extent as f32;
 
-    let b_data    = gstate.readback(ctx, &gstate.b_vec,  gstate.vec_len())?;
-    let a_data    = gstate.readback(ctx, &gstate.a_vec,  gstate.vec_len())?;
-    let c_data    = gstate.readback(ctx, &gstate.c_fld,  gstate.scalar_len())?;
-    let phi_data  = gstate.readback(ctx, &gstate.phi,    gstate.scalar_len())?;
-    let phi_g_data = gstate.readback(ctx, &gstate.phi_g, gstate.scalar_len())?;
+    let b_data       = gstate.readback(ctx, &gstate.b_vec,       gstate.vec_len())?;
+    let a_data       = gstate.readback(ctx, &gstate.a_vec,       gstate.vec_len())?;
+    let c_data       = gstate.readback(ctx, &gstate.c_fld,       gstate.scalar_len())?;
+    let phi_data     = gstate.readback(ctx, &gstate.phi,         gstate.scalar_len())?;
+    let phi_g_data   = gstate.readback(ctx, &gstate.phi_g,       gstate.scalar_len())?;
+    let pmag_data    = gstate.readback(ctx, &gstate.poynting_mag, gstate.scalar_len())?;
+    let udens_data   = gstate.readback(ctx, &gstate.energy_dens,  gstate.scalar_len())?;
 
     let mut maxima = Vec::new();
 
@@ -114,6 +116,24 @@ pub fn compute_maxima(
         });
     }
 
+    let (pmag_max, pmag_idx) = scalar_max(&pmag_data);
+    if pmag_max > 0.0 {
+        maxima.push(FieldMaximum {
+            field:        FieldName::PoyntingMag,
+            max_value:    pmag_max as f64,
+            max_location: index_to_world(pmag_idx, n1, dx, r),
+        });
+    }
+
+    let (udens_max, udens_idx) = scalar_max(&udens_data);
+    if udens_max > 0.0 {
+        maxima.push(FieldMaximum {
+            field:        FieldName::EnergyDensity,
+            max_value:    udens_max as f64,
+            max_location: index_to_world(udens_idx, n1, dx, r),
+        });
+    }
+
     Ok(maxima)
 }
 
@@ -150,6 +170,12 @@ pub fn extract_volume(
         FieldName::PhiG => {
             gstate.readback(ctx, &gstate.phi_g, total)?
         }
+        FieldName::PoyntingMag => {
+            gstate.readback(ctx, &gstate.poynting_mag, total)?
+        }
+        FieldName::EnergyDensity => {
+            gstate.readback(ctx, &gstate.energy_dens, total)?
+        }
         _ => vec![0.0f32; total],
     };
 
@@ -179,15 +205,43 @@ pub fn extract_volume(
     })
 }
 
-/// Stub: holonomy ∮ A·dl (Phase 5).
+/// Compute holonomy ∮ A·dl for each requested closed path.
+///
+/// Uses CPU-side trilinear interpolation of the `a_vec` grid.  The path
+/// is discretised into `N_SEG` equal-length chords; each chord contributes
+/// A(midpoint) · Δr.  This is exact to O(|Δr|²) (midpoint rule).
+///
+/// Returns value = 0.0 for any path that lies outside the simulation domain.
 pub fn compute_holonomies(
-    _ctx:    &GpuContext,
-    _gstate: &GpuGridState,
-    _grid:   &YeeGrid,
-    paths:   &[HolonomyPath],
+    ctx:    &GpuContext,
+    gstate: &GpuGridState,
+    grid:   &YeeGrid,
+    paths:  &[HolonomyPath],
 ) -> Vec<HolonomyResult> {
+    if paths.is_empty() {
+        return vec![];
+    }
+
+    // Read A once; reuse across all path integrals.
+    let a_data = match gstate.readback(ctx, &gstate.a_vec, gstate.vec_len()) {
+        Ok(d)  => d,
+        Err(e) => {
+            log::warn!("Holonomy readback failed: {e}");
+            return paths.iter()
+                .map(|p| HolonomyResult { path: p.clone(), value: 0.0 })
+                .collect();
+        }
+    };
+
+    let n1     = gstate.n1 as usize;
+    let dx     = grid.dx as f32;
+    let extent = grid.extent as f32;
+
     paths.iter()
-        .map(|p| HolonomyResult { path: p.clone(), value: 0.0 })
+        .map(|path| {
+            let value = path_integral(&a_data, n1, dx, extent, path);
+            HolonomyResult { path: path.clone(), value: value as f64 }
+        })
         .collect()
 }
 
@@ -228,6 +282,14 @@ fn extract_slice(
         FieldName::PhiG => {
             let pg = gstate.readback(ctx, &gstate.phi_g, gstate.scalar_len())?;
             slice_scalar(&pg, n1, req.axis, layer)
+        }
+        FieldName::PoyntingMag => {
+            let pm = gstate.readback(ctx, &gstate.poynting_mag, gstate.scalar_len())?;
+            slice_scalar(&pm, n1, req.axis, layer)
+        }
+        FieldName::EnergyDensity => {
+            let ud = gstate.readback(ctx, &gstate.energy_dens, gstate.scalar_len())?;
+            slice_scalar(&ud, n1, req.axis, layer)
         }
         // Phase 5+ fields — return zeros.
         _ => vec![0.0f32; (n1 * n1) as usize],
@@ -354,4 +416,145 @@ fn index_to_world(flat_idx: usize, n1: u32, dx: f32, extent: f32) -> [f64; 3] {
     let ix = flat_idx % n;
     let world = |i: usize| (-extent + dx * i as f32) as f64;
     [world(ix), world(iy), world(iz)]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Holonomy helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Number of quadrature points around a closed path.
+const N_SEG: usize = 512;
+
+/// Trilinearly interpolate the vector potential A at world position (x, y, z).
+///
+/// `a_data` is the stride-4 buffer [Ax, Ay, Az, 0] in z-major order.
+/// Returns [0, 0, 0] for points outside the domain.
+fn interp_a(a_data: &[f32], n1: usize, dx: f32, extent: f32, x: f32, y: f32, z: f32) -> [f32; 3] {
+    // Convert world → fractional grid coordinates
+    let gx = (x + extent) / dx;
+    let gy = (y + extent) / dx;
+    let gz = (z + extent) / dx;
+
+    // Bounds check — return zero for out-of-domain queries.
+    let n = (n1 - 1) as f32;
+    if gx < 0.0 || gx > n || gy < 0.0 || gy > n || gz < 0.0 || gz > n {
+        return [0.0; 3];
+    }
+
+    let i0x = (gx as usize).min(n1 - 2);
+    let i0y = (gy as usize).min(n1 - 2);
+    let i0z = (gz as usize).min(n1 - 2);
+    let i1x = i0x + 1;
+    let i1y = i0y + 1;
+    let i1z = i0z + 1;
+
+    let fx = (gx - i0x as f32).clamp(0.0, 1.0);
+    let fy = (gy - i0y as f32).clamp(0.0, 1.0);
+    let fz = (gz - i0z as f32).clamp(0.0, 1.0);
+
+    let a = |ix: usize, iy: usize, iz: usize| -> [f32; 3] {
+        let base = (ix + iy * n1 + iz * n1 * n1) * 4;
+        [a_data[base], a_data[base + 1], a_data[base + 2]]
+    };
+
+    let w000 = (1.0-fx)*(1.0-fy)*(1.0-fz);
+    let w100 = fx      *(1.0-fy)*(1.0-fz);
+    let w010 = (1.0-fx)*fy      *(1.0-fz);
+    let w110 = fx      *fy      *(1.0-fz);
+    let w001 = (1.0-fx)*(1.0-fy)*fz;
+    let w101 = fx      *(1.0-fy)*fz;
+    let w011 = (1.0-fx)*fy      *fz;
+    let w111 = fx      *fy      *fz;
+
+    let c = [a(i0x,i0y,i0z), a(i1x,i0y,i0z), a(i0x,i1y,i0z), a(i1x,i1y,i0z),
+             a(i0x,i0y,i1z), a(i1x,i0y,i1z), a(i0x,i1y,i1z), a(i1x,i1y,i1z)];
+
+    let mut out = [0.0f32; 3];
+    for k in 0..3 {
+        out[k] = c[0][k]*w000 + c[1][k]*w100 + c[2][k]*w010 + c[3][k]*w110
+               + c[4][k]*w001 + c[5][k]*w101 + c[6][k]*w011 + c[7][k]*w111;
+    }
+    out
+}
+
+/// Compute ∮ A·dl for a closed path using the midpoint rule.
+///
+/// `points`: N+1 points where the last equals the first (closed).
+/// The tangent at each segment is `points[i+1] - points[i]`.
+fn line_integral(
+    a_data: &[f32],
+    n1:     usize,
+    dx:     f32,
+    extent: f32,
+    points: &[[f32; 3]],
+) -> f32 {
+    let n = points.len() - 1;
+    let mut sum = 0.0f32;
+    for i in 0..n {
+        let p = points[i];
+        let q = points[i + 1];
+        // Midpoint of segment
+        let mx = 0.5 * (p[0] + q[0]);
+        let my = 0.5 * (p[1] + q[1]);
+        let mz = 0.5 * (p[2] + q[2]);
+        // Tangent vector Δr
+        let dr = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
+        // A at midpoint
+        let a = interp_a(a_data, n1, dx, extent, mx, my, mz);
+        // A · Δr
+        sum += a[0]*dr[0] + a[1]*dr[1] + a[2]*dr[2];
+    }
+    sum
+}
+
+/// Build path points for a given HolonomyPath and call `line_integral`.
+fn path_integral(
+    a_data: &[f32],
+    n1:     usize,
+    dx:     f32,
+    extent: f32,
+    path:   &HolonomyPath,
+) -> f32 {
+    use std::f32::consts::TAU;
+
+    // Build N_SEG+1 points (last == first).
+    let points: Vec<[f32; 3]> = match path {
+        HolonomyPath::ZCircle { z_m, radius_m } => {
+            let z = *z_m as f32;
+            let r = *radius_m as f32;
+            (0..=N_SEG).map(|i| {
+                let theta = TAU * i as f32 / N_SEG as f32;
+                [r * theta.cos(), r * theta.sin(), z]
+            }).collect()
+        }
+        HolonomyPath::ToroidalLoop { centre_m, major_radius_m } => {
+            // Toroidal loop: circle in the XY plane at the torus centre
+            // (goes around the hole of the torus).
+            let cx = centre_m[0] as f32;
+            let cy = centre_m[1] as f32;
+            let cz = centre_m[2] as f32;
+            let r  = *major_radius_m as f32;
+            (0..=N_SEG).map(|i| {
+                let theta = TAU * i as f32 / N_SEG as f32;
+                [cx + r * theta.cos(), cy + r * theta.sin(), cz]
+            }).collect()
+        }
+        HolonomyPath::PoloidalLoop { centre_m, major_radius_m, minor_radius_m } => {
+            // Poloidal loop: small circle in the meridional plane (θ=0)
+            // of the torus.  Goes around the tube cross-section.
+            let cx = centre_m[0] as f32;
+            let cz = centre_m[2] as f32;
+            let big_r   = *major_radius_m as f32;
+            let small_r = *minor_radius_m as f32;
+            let cy = centre_m[1] as f32;
+            (0..=N_SEG).map(|i| {
+                let phi = TAU * i as f32 / N_SEG as f32;
+                // Meridional plane at azimuth=0 → X axis.
+                // Point = centre + (big_R + small_r·cos(φ))·x̂ + small_r·sin(φ)·ẑ
+                [cx + (big_r + small_r * phi.cos()), cy, cz + small_r * phi.sin()]
+            }).collect()
+        }
+    };
+
+    line_integral(a_data, n1, dx, extent, &points)
 }
