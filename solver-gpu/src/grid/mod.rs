@@ -1,7 +1,8 @@
 //! Yee grid infrastructure.
 //!
-//! The Yee grid is a structured Cartesian grid where different field
-//! components live at staggered locations:
+//! The Yee grid is a structured Cartesian grid.  In the potential-primary
+//! formulation all quantities are stored at vertices for simplicity in
+//! Phase 1/2.  The FDTD stagger (Phase 3) will use proper half-cell offsets:
 //!
 //!   φ        →  cell vertices        (i,   j,   k)
 //!   Ax/Ay/Az →  cell edges           (i+½, j,   k) etc.
@@ -11,11 +12,9 @@
 //!
 //! This staggering is the structured-grid realisation of Nédélec H(curl)
 //! elements — mathematically equivalent, GPU-friendly.
-//!
-//! # TODO (Phase 2)
-//! - Allocate GPU buffers for each component
-//! - Implement index helpers and boundary masks
-//! - Derive-field kernels (E, B, C from φ and A)
+
+pub mod state;
+pub use state::GpuGridState;
 
 /// Grid configuration.
 #[derive(Debug, Clone)]
