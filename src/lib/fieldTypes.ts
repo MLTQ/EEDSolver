@@ -200,13 +200,14 @@ export const FIELD_LABELS: Partial<Record<FieldName, string>> = {
 
 /** Short chip labels for the field selector bar. */
 export const FIELD_CHIP: Partial<Record<FieldName, string>> = {
-  phi:          "φ",
-  A_magnitude:  "|A|",
-  B_magnitude:  "|B|",
-  C_field:      "C",
-  poynting_mag: "|P|",
-  phi_g:        "Φ_g",
-  B_g_magnitude:"|B_g|",
+  phi:            "φ",
+  A_magnitude:    "|A|",
+  B_magnitude:    "|B|",
+  C_field:        "C",
+  poynting_mag:   "|P|",
+  energy_density: "u",
+  phi_g:          "Φ_g",
+  B_g_magnitude:  "|B_g|",
 };
 
 export const FIELD_UNITS: Partial<Record<FieldName, string>> = {
@@ -233,7 +234,11 @@ export const COIL_LABELS: Record<CoilType, string> = {
 
 /** Fields available after Phase 1-4 solve.
  *  GEM fields (phi_g) only appear in time-domain mode with GEM enabled. */
-export const PHASE1_FIELDS: FieldName[] = ["B_magnitude", "A_magnitude", "C_field", "phi", "phi_g"];
+export const PHASE1_FIELDS: FieldName[] = [
+  "B_magnitude", "A_magnitude", "C_field",
+  "poynting_mag", "energy_density",
+  "phi", "phi_g",
+];
 
 /** All EM fields (add as phases complete). */
 export const EM_FIELDS: FieldName[] = [

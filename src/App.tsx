@@ -127,6 +127,13 @@ export default function App() {
             );
           })()}
 
+          {/* Magnetic helicity */}
+          {result && Math.abs(result.magnetic_helicity) > 1e-40 && (
+            <span className="text-xs text-violet-400/80 tabular-nums" title="Magnetic helicity ∫A·B d³x">
+              H={result.magnetic_helicity.toExponential(2)}
+            </span>
+          )}
+
           {/* Solve stats */}
           {result && (
             <span className="text-xs text-slate-600 tabular-nums">
@@ -209,6 +216,30 @@ export default function App() {
           {result && result.slices.length > 0 && (
             <div className="h-72 border-t border-rim shrink-0">
               <SliceViewer result={result} selectedField={selectedField} />
+            </div>
+          )}
+
+          {/* Holonomy results panel */}
+          {result && result.holonomies.length > 0 && (
+            <div className="border-t border-rim shrink-0 px-4 py-2 flex items-center gap-4 flex-wrap">
+              <span className="text-xs text-slate-600 shrink-0">∮ A·dl</span>
+              {result.holonomies.map((h, i) => {
+                const v = h.value;
+                const fmtV = (Math.abs(v) >= 1e-3 || v === 0)
+                  ? v.toPrecision(4) : v.toExponential(3);
+                const pathLabel = "z_circle" in h.path
+                  ? `r=${h.path.z_circle.radius_m.toFixed(3)}m z=${h.path.z_circle.z_m.toFixed(3)}m`
+                  : "toroid" in h.path ? "toroidal"
+                  : "poloidal";
+                return (
+                  <span key={i}
+                    className="text-xs font-mono tabular-nums px-2 py-0.5 rounded bg-violet-950/40 border border-violet-800/30 text-violet-300"
+                    title={pathLabel}
+                  >
+                    {fmtV} V·s
+                  </span>
+                );
+              })}
             </div>
           )}
         </div>

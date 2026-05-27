@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useState } from "react";
 import type {
   CoilEntity, CoilParams, CoilType,
-  EedParams, FieldName, GemParams, SolveRequest, SolverConfig, SolverMode,
+  EedParams, FieldName, GemParams, HolonomyPath,
+  SolveRequest, SolverConfig, SolverMode,
 } from "../../lib/fieldTypes";
 import { COIL_LABELS, FIELD_CHIP, PHASE1_FIELDS } from "../../lib/fieldTypes";
 
@@ -21,18 +22,76 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
   const setGem   = (patch: Partial<GemParams>) =>
     set({ gem: { ...request.gem, ...patch } });
 
-  // Single-entity shortcut (multi-entity UI comes in Phase 5).
-  const entity    = request.entities[0];
+  // Entity management — track which entity is selected for editing.
+  const [activeEntity, setActiveEntity] = useState(0);
+  const entityIdx = Math.min(activeEntity, request.entities.length - 1);
+  const entity    = request.entities[entityIdx];
   const setEntity = (patch: Partial<CoilEntity>) =>
-    set({ entities: [{ ...entity, ...patch }, ...request.entities.slice(1)] });
+    set({ entities: request.entities.map((e, i) => i === entityIdx ? { ...e, ...patch } : e) });
   const setCoil   = (patch: Partial<CoilParams>) =>
     setEntity({ coil: { ...entity.coil, ...patch } });
+
+  const addEntity = () => {
+    const newE: CoilEntity = {
+      coil: { coil_type: "solenoid", radius_m: 0.05, turns: 10, pitch_m: 0.005, wire_radius_m: 0.001, current_A: 1.0 },
+      position_m:    [0, 0, 0.1],
+      orientation:   [0, 0, 0, 1],
+      superconducting: false,
+    };
+    set({ entities: [...request.entities, newE] });
+    setActiveEntity(request.entities.length);
+  };
+  const removeEntity = (idx: number) => {
+    if (request.entities.length <= 1) return;
+    const next = request.entities.filter((_, i) => i !== idx);
+    set({ entities: next });
+    setActiveEntity(Math.min(activeEntity, next.length - 1));
+  };
+
+  // Holonomy path management.
+  const addHolonomyPath = () => {
+    const p: HolonomyPath = { z_circle: { z_m: 0, radius_m: entity.coil.radius_m * 0.5 } };
+    set({ holonomy_paths: [...request.holonomy_paths, p] });
+  };
+  const removeHolonomyPath = (idx: number) =>
+    set({ holonomy_paths: request.holonomy_paths.filter((_, i) => i !== idx) });
+  const updateHolonomyPath = (idx: number, p: HolonomyPath) =>
+    set({ holonomy_paths: request.holonomy_paths.map((hp, i) => i === idx ? p : hp) });
 
   return (
     <div className={`flex flex-col gap-5 ${disabled ? "opacity-60 pointer-events-none" : ""}`}>
 
+      {/* ── Entity selector ───────────────────────────────────────────── */}
+      {request.entities.length > 1 && (
+        <Section label="Entities">
+          <div className="flex flex-wrap gap-1">
+            {request.entities.map((_, i) => (
+              <button
+                key={i}
+                onClick={() => setActiveEntity(i)}
+                className={`text-xs px-2 py-0.5 rounded border transition-colors ${
+                  i === entityIdx
+                    ? "bg-accent/20 text-accent border-accent/40"
+                    : "text-slate-500 border-rim hover:text-slate-300"
+                }`}
+              >
+                #{i + 1}
+              </button>
+            ))}
+          </div>
+          {request.entities.length > 1 && (
+            <button
+              onClick={() => removeEntity(entityIdx)}
+              className="text-xs text-red-500 hover:text-red-300 text-left"
+            >
+              ✕ Remove coil #{entityIdx + 1}
+            </button>
+          )}
+        </Section>
+      )}
+
       {/* ── Coil type ─────────────────────────────────────────────────── */}
-      <Section label="Coil type">
+      <Section label={`Coil ${request.entities.length > 1 ? `#${entityIdx + 1} ` : ""}type`}>
         <select
           className="select-dark w-full"
           value={entity.coil.coil_type}
@@ -42,6 +101,12 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
             <option key={k} value={k}>{COIL_LABELS[k]}</option>
           ))}
         </select>
+        <button
+          onClick={addEntity}
+          className="text-xs text-slate-500 hover:text-slate-300 text-left mt-0.5"
+        >
+          + Add coil
+        </button>
       </Section>
 
       {/* ── Geometry ──────────────────────────────────────────────────── */}
@@ -137,6 +202,63 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
         <Slider label="γ" unit=""    value={request.eed.gamma} min={0}   max={2}  step={0.01} onChange={v => setEed({ gamma: v })}
           hint="1 = full EED · 0 = standard Maxwell"
         />
+      </Section>
+
+      {/* ── Coil position (multi-entity) ──────────────────────────────── */}
+      {request.entities.length > 1 && (
+        <Section label={`Coil #${entityIdx + 1} position`}>
+          <Slider
+            label="x" unit="m"
+            value={entity.position_m[0]} min={-0.5} max={0.5} step={0.01}
+            onChange={v => setEntity({ position_m: [v, entity.position_m[1], entity.position_m[2]] })}
+          />
+          <Slider
+            label="y" unit="m"
+            value={entity.position_m[1]} min={-0.5} max={0.5} step={0.01}
+            onChange={v => setEntity({ position_m: [entity.position_m[0], v, entity.position_m[2]] })}
+          />
+          <Slider
+            label="z" unit="m"
+            value={entity.position_m[2]} min={-0.5} max={0.5} step={0.01}
+            onChange={v => setEntity({ position_m: [entity.position_m[0], entity.position_m[1], v] })}
+          />
+        </Section>
+      )}
+
+      {/* ── Holonomy paths ─────────────────────────────────────────────── */}
+      <Section label="Holonomy paths">
+        <div className="text-xs text-slate-600 mb-1">∮ A·dl along closed loops (AB phase)</div>
+        {request.holonomy_paths.map((hp, i) => {
+          if (!("z_circle" in hp)) return null; // only ZCircle UI for now
+          const zc = hp.z_circle;
+          return (
+            <div key={i} className="border border-rim rounded p-2 flex flex-col gap-1.5 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">ZCircle #{i + 1}</span>
+                <button
+                  onClick={() => removeHolonomyPath(i)}
+                  className="text-red-600 hover:text-red-400"
+                >✕</button>
+              </div>
+              <Slider
+                label="radius" unit="m"
+                value={zc.radius_m} min={0.005} max={0.2} step={0.005}
+                onChange={v => updateHolonomyPath(i, { z_circle: { ...zc, radius_m: v } })}
+              />
+              <Slider
+                label="z" unit="m"
+                value={zc.z_m} min={-0.1} max={0.1} step={0.005}
+                onChange={v => updateHolonomyPath(i, { z_circle: { ...zc, z_m: v } })}
+              />
+            </div>
+          );
+        })}
+        <button
+          onClick={addHolonomyPath}
+          className="text-xs text-slate-500 hover:text-slate-300 text-left"
+        >
+          + Add loop
+        </button>
       </Section>
 
       {/* ── GEM gravitational sector ──────────────────────────────────── */}
