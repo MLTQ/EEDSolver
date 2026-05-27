@@ -440,6 +440,11 @@ impl GpuGridState {
     /// # Initial conditions
     /// Call after `run_biot_savart()` to start from the static A field.
     /// `phi_vel` and `a_vel` are zero-initialised (static start).
+    /// Run one or more FDTD leapfrog steps.
+    ///
+    /// `sigma_max_override`: peak sponge damping rate [1/s].
+    ///   - `None`   → use the default `c/(4·dx)` (absorbing PML-like layer).
+    ///   - `Some(0.0)` → disable sponge entirely (useful for conservation tests).
     pub fn run_fdtd(
         &self,
         ctx:     &GpuContext,
@@ -447,6 +452,20 @@ impl GpuGridState {
         dt:      f32,
         n_steps: u32,
         gamma:   f32,   // EED coupling: 1.0 = full EED, 0.0 = Maxwell
+    ) -> Result<(), SolverError> {
+        self.run_fdtd_sponge(ctx, grid, dt, n_steps, gamma, None)
+    }
+
+    /// Like `run_fdtd` but with explicit sponge control.
+    /// Pass `sigma_max = Some(0.0)` to disable the absorbing layer.
+    pub fn run_fdtd_sponge(
+        &self,
+        ctx:       &GpuContext,
+        grid:      &YeeGrid,
+        dt:        f32,
+        n_steps:   u32,
+        gamma:     f32,
+        sigma_max: Option<f32>,
     ) -> Result<(), SolverError> {
         if n_steps == 0 { return Ok(()); }
 
@@ -489,7 +508,7 @@ impl GpuGridState {
         // Build bind groups.
         // Sponge layer: 8 cells deep, σ_max = c/dx ÷ 4  (quarter-wave damping).
         let sponge_cells = (n1 / 8).max(4);
-        let sigma_max    = (2.998e8f32 / grid.dx as f32) * 0.25;
+        let sigma_max    = sigma_max.unwrap_or_else(|| (2.998e8f32 / grid.dx as f32) * 0.25);
         let fdtd_params  = FdtdParamsGpu {
             dx: grid.dx as f32, dt, n1, gamma,
             sponge_cells, sigma_max, _pad: [0; 2],
