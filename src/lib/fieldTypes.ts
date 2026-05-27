@@ -273,7 +273,7 @@ export function defaultSolveRequest(): SolveRequest {
       { axis: "z", position: 0.5, field: "B_magnitude", resolution: 128 },
       { axis: "x", position: 0.5, field: "B_magnitude", resolution: 128 },
     ],
-    request_volume: false,
+    request_volume: true,
     volume_field:   "B_magnitude",
     holonomy_paths: [],
   };

@@ -1,11 +1,13 @@
-//! Post-processing: field extraction from GPU buffers to `SliceData`.
+//! Post-processing: field extraction from GPU buffers to `SliceData` and `VolumeData`.
 //!
 //! # Phase 1 (implemented)
 //! - 2D axis-aligned slices of scalar and vector-magnitude fields
 //! - Field min/max computation
 //!
-//! # TODO (Phase 2+)
-//! - 3D volume extraction (ray-marching data)
+//! # Phase 2 (implemented)
+//! - 3D volume extraction normalised to [0,1] for ray-marching
+//!
+//! # TODO (Phase 5)
 //! - Modified Poynting vector |P| = |E×B − EC|
 //! - Magnetic helicity ∫ A·B d³x
 //! - Holonomy path integrals ∮ A·dl
@@ -14,7 +16,10 @@ use crate::{
     context::GpuContext,
     error::SolverError,
     grid::{GpuGridState, YeeGrid},
-    types::{FieldMaximum, FieldName, HolonomyPath, HolonomyResult, SliceAxis, SliceData, SliceRequest},
+    types::{
+        FieldMaximum, FieldName, HolonomyPath, HolonomyResult,
+        SliceAxis, SliceData, SliceRequest, VolumeData,
+    },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -80,6 +85,62 @@ pub fn compute_maxima(
     }
 
     Ok(maxima)
+}
+
+/// Extract a 3-D scalar volume normalised to [0, 1] for ray-marching.
+///
+/// The volume covers `[-extent, +extent]³` and has `(n+1)³` voxels.
+/// Phase 1 supports `BMagnitude`, `AMagnitude`, and `CField`.
+/// Other fields return zeros (will be filled in as phases complete).
+pub fn extract_volume(
+    ctx:    &GpuContext,
+    gstate: &GpuGridState,
+    grid:   &YeeGrid,
+    field:  &FieldName,
+) -> Result<VolumeData, SolverError> {
+    let n1    = gstate.n1;
+    let total = gstate.scalar_len(); // n1³
+    let r     = grid.extent;
+
+    let raw: Vec<f32> = match field {
+        FieldName::BMagnitude => {
+            let b = gstate.readback(ctx, &gstate.b_vec, gstate.vec_len())?;
+            b.chunks_exact(4).map(|c| (c[0]*c[0]+c[1]*c[1]+c[2]*c[2]).sqrt()).collect()
+        }
+        FieldName::AMagnitude => {
+            let a = gstate.readback(ctx, &gstate.a_vec, gstate.vec_len())?;
+            a.chunks_exact(4).map(|c| (c[0]*c[0]+c[1]*c[1]+c[2]*c[2]).sqrt()).collect()
+        }
+        FieldName::CField => {
+            gstate.readback(ctx, &gstate.c_fld, total)?
+        }
+        _ => vec![0.0f32; total],
+    };
+
+    // Normalise to [0, 1].  For C field (signed) use absolute value before norm.
+    let needs_abs = matches!(field, FieldName::CField);
+    let vals: Vec<f32> = if needs_abs { raw.iter().map(|v| v.abs()).collect() } else { raw };
+
+    let max_val = vals.iter().cloned().fold(0.0_f32, f32::max);
+    let min_val = vals.iter().cloned().fold(f32::MAX, f32::min);
+
+    let normalised: Vec<f32> = if max_val > 0.0 {
+        vals.iter().map(|v| (v - min_val) / (max_val - min_val)).collect()
+    } else {
+        vec![0.0f32; total]
+    };
+
+    let _n = n1 as usize;
+    Ok(VolumeData {
+        field:     field.clone(),
+        shape:     [n1, n1, n1],
+        data:      normalised,
+        x_range:   [-r, r],
+        y_range:   [-r, r],
+        z_range:   [-r, r],
+        field_min: min_val as f64,
+        field_max: max_val as f64,
+    })
 }
 
 /// Stub: holonomy ∮ A·dl (Phase 5).

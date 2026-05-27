@@ -250,7 +250,7 @@ impl Default for SliceRequest {
         Self {
             axis:       SliceAxis::Z,
             position:   0.5,
-            field:      FieldName::Phi,
+            field:      FieldName::BMagnitude,
             resolution: 128,
         }
     }
@@ -296,7 +296,7 @@ impl Default for SolveRequest {
             solver:         SolverConfig::default(),
             slices:         vec![SliceRequest::default()],
             request_volume: true,
-            volume_field:   FieldName::Phi,
+            volume_field:   FieldName::BMagnitude,
             holonomy_paths: vec![],
         }
     }

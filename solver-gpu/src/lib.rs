@@ -39,11 +39,13 @@ use std::time::Instant;
 /// Store as Tauri managed state — it is `Send + Sync`.
 pub struct OracleSolver {
     ctx:   GpuContext,
+    #[allow(dead_code)]
     state: Arc<RwLock<InternalState>>,
 }
 
 #[derive(Debug, Default)]
 struct InternalState {
+    #[allow(dead_code)]
     ready: bool,
 }
 
@@ -134,6 +136,24 @@ impl OracleSolver {
             &self.ctx, &gstate, &grid, &request.holonomy_paths,
         );
 
+        // ── Volume extraction ────────────────────────────────────────────────
+        let volume = if request.request_volume {
+            // Guard: if the requested field isn't populated yet, fall back to B.
+            let field = match &request.volume_field {
+                f @ (FieldName::BMagnitude | FieldName::AMagnitude | FieldName::CField) => f.clone(),
+                _ => {
+                    warnings.push(format!(
+                        "Volume field {:?} not yet implemented — falling back to B_magnitude.",
+                        request.volume_field
+                    ));
+                    FieldName::BMagnitude
+                }
+            };
+            Some(postproc::extract_volume(&self.ctx, &gstate, &grid, &field)?)
+        } else {
+            None
+        };
+
         let solve_time = t0.elapsed().as_secs_f64();
         log::info!("Solve complete in {:.3}s", solve_time);
 
@@ -141,7 +161,7 @@ impl OracleSolver {
             solve_time_s: solve_time,
             grid_cells:   grid.total_cells(),
             slices,
-            volume:       None,   // Phase 2+
+            volume,
             maxima,
             holonomies,
             warnings,
