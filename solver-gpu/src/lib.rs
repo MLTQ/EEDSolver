@@ -121,15 +121,27 @@ impl OracleSolver {
         if alpha_sq > 0.0 {
             // rhs = −∇·J; zero for all current coil types (closed loops).
             let rhs = vec![0.0f32; gstate.scalar_len()];
-            // 64 Jacobi sweeps converge well for typical grid sizes.
-            // TODO: replace with CG for faster convergence on large grids.
-            let n_jacobi = (64u32).min(grid.n * 2);
-            gstate.run_jacobi_phi(&self.ctx, &grid, &rhs, alpha_sq, n_jacobi)?;
-            log::info!(
-                "Static EED φ: α={:.3} m⁻¹  λ={:.3} m  ({n_jacobi} Jacobi iters)",
-                request.eed.alpha,
-                1.0 / request.eed.alpha,
-            );
+
+            // Use PCG for larger grids (n > 32) — O(√κ) vs O(κ) convergence.
+            // Fall back to Jacobi for very small debug grids.
+            if grid.n > 32 {
+                // 100 PCG iterations converge to 1e-6 relative tolerance
+                // for typical EED problems on 64³–256³ grids.
+                gstate.run_cg_phi(&self.ctx, &grid, &rhs, alpha_sq, 1e-6, 100)?;
+                log::info!(
+                    "Static EED φ (PCG): α={:.3} m⁻¹  λ={:.3} m",
+                    request.eed.alpha,
+                    1.0 / request.eed.alpha,
+                );
+            } else {
+                let n_jacobi = (64u32).min(grid.n * 2);
+                gstate.run_jacobi_phi(&self.ctx, &grid, &rhs, alpha_sq, n_jacobi)?;
+                log::info!(
+                    "Static EED φ (Jacobi): α={:.3} m⁻¹  λ={:.3} m  ({n_jacobi} iters)",
+                    request.eed.alpha,
+                    1.0 / request.eed.alpha,
+                );
+            }
         }
 
         // ── Phase 2b: Static EED A correction (Yukawa + γ coupling) ─────────

@@ -106,6 +106,19 @@ pub struct JacobiAParamsGpu {
     pub n1:    u32,
 }
 
+/// Uniform params for the PCG scalar solver.
+/// Must match `CgParams` in `cg_scalar.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct CgParamsGpu {
+    pub dx:    f32,
+    pub m2:    f32,    // α²
+    pub n1:    u32,
+    pub alpha: f32,    // CG α  (updated each iteration)
+    pub beta:  f32,    // CG β  (updated each iteration)
+    pub _pad:  [u32; 3],
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GpuGridState
 // ─────────────────────────────────────────────────────────────────────────────
@@ -761,6 +774,222 @@ impl GpuGridState {
         dev.poll(wgpu::MaintainBase::Wait);
 
         log::info!("Jacobi φ: {n_iter} iterations, α²={alpha_sq:.3e}, n1={n1}");
+        Ok(())
+    }
+
+    // ── Phase 2c: Preconditioned CG scalar solver ─────────────────────────────
+
+    /// Solve (−∇² + α²)φ = −rhs_data using PCG with Jacobi preconditioner.
+    ///
+    /// Replaces `run_jacobi_phi()` for large grids (better convergence).
+    /// Four GPU passes per iteration; two tiny CPU readbacks (~4KB each).
+    ///
+    /// Stores the solution in `self.phi`.  Initial guess: zero.
+    pub fn run_cg_phi(
+        &mut self,
+        ctx:       &GpuContext,
+        grid:      &YeeGrid,
+        rhs_data:  &[f32],
+        alpha_sq:  f32,
+        tol:       f32,   // relative convergence: stop when ‖r‖² < tol²·‖b‖²
+        max_iter:  u32,
+    ) -> Result<(), SolverError> {
+        if max_iter == 0 { return Ok(()); }
+
+        let dev      = ctx.device();
+        let n1       = self.n1;
+        let bytes    = (self.scalar_len() as u64) * 4;
+        let wg_count = (n1 * n1 * n1).div_ceil(256);
+        let n_wg     = wg_count as usize;
+        let part_bytes = (n_wg as u64) * 4;
+
+        // Helper buffers.
+        let make_s = |label: &str, sz: u64| dev.create_buffer(&wgpu::BufferDescriptor {
+            label:              Some(label),
+            size:               sz,
+            usage:              wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let r_buf   = make_s("cg_r",   bytes);
+        let p_buf   = make_s("cg_p",   bytes);
+        let ap_buf  = make_s("cg_ap",  bytes);
+        let _rr_buf = make_s("cg_rr",  bytes);   // same as r for second dot (unused: r_buf reused)
+        let par_buf = make_s("cg_par", part_bytes);
+
+        // b = −rhs (A = −∇² + α², so A*u = b = −rhs).
+        let dx2   = (grid.dx * grid.dx) as f32;
+        let m_inv = dx2 / (6.0 + alpha_sq * dx2);
+        let b_data: Vec<f32> = rhs_data.iter().map(|&v| -v).collect();
+        let b_norm2: f32 = b_data.iter().map(|v| v * v).sum();
+        let abs_tol2 = (tol * tol * b_norm2).max(1e-30_f32);
+
+        // Build r₀ = b and p₀ = M⁻¹b (with boundary zeroing) on CPU, upload.
+        let n = n1 as usize;
+        let boundary = |i: usize| -> bool {
+            let ix = i % n; let iy = (i / n) % n; let iz = i / (n * n);
+            ix == 0 || ix == n-1 || iy == 0 || iy == n-1 || iz == 0 || iz == n-1
+        };
+        let r0: Vec<f32> = b_data.iter().enumerate()
+            .map(|(i, &v)| if boundary(i) { 0.0 } else { v }).collect();
+        let p0: Vec<f32> = r0.iter().map(|&v| v * m_inv).collect();
+        {
+            let rb = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("cg_r0"), contents: bytemuck::cast_slice(&r0),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            let pb = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("cg_p0"), contents: bytemuck::cast_slice(&p0),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            let mut enc = dev.create_command_encoder(&Default::default());
+            enc.copy_buffer_to_buffer(&rb, 0, &r_buf, 0, bytes);
+            enc.copy_buffer_to_buffer(&pb, 0, &p_buf, 0, bytes);
+            ctx.queue().submit([enc.finish()]);
+            dev.poll(wgpu::MaintainBase::Wait);
+        }
+
+        // ρ_old = r₀ · p₀ = ‖r₀‖² · m_inv  (computed on CPU from r0 and p0).
+        let mut rho_old: f32 = r0.iter().zip(p0.iter()).map(|(r, p)| r * p).sum();
+
+        // Params buffer (alpha/beta updated each iteration).
+        let mut cg_par = CgParamsGpu {
+            dx: grid.dx as f32, m2: alpha_sq, n1,
+            alpha: 0.0, beta: 0.0, _pad: [0; 3],
+        };
+        let params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:    Some("cg_params"),
+            contents: bytes_of(&cg_par),
+            usage:    wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        // Compile shader + pipelines once.
+        let shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label:  Some("cg_scalar"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/cg_scalar.wgsl").into()),
+        });
+        let mk_pl = |label: &str, entry: &str| dev.create_compute_pipeline(
+            &wgpu::ComputePipelineDescriptor {
+                label: Some(label), layout: None, module: &shader,
+                entry_point: entry,
+                compilation_options: Default::default(), cache: None,
+            }
+        );
+        let mv_pl  = mk_pl("cg_matvec",    "cg_matvec");
+        let dot_pl = mk_pl("cg_dot",       "cg_dot");
+        let xr_pl  = mk_pl("cg_update_xr", "cg_update_xr");
+        let p_pl   = mk_pl("cg_update_p",  "cg_update_p");
+
+        // Bind group factory.
+        let bg = |pl: &wgpu::ComputePipeline, adot: &wgpu::Buffer, bdot: &wgpu::Buffer| {
+            dev.create_bind_group(&wgpu::BindGroupDescriptor {
+                label:   Some("cg_bg"),
+                layout:  &pl.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: self.phi.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: r_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: p_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: ap_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 4, resource: adot.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 5, resource: bdot.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: par_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 7, resource: params_buf.as_entire_binding() },
+                ],
+            })
+        };
+
+        let mv_bg   = bg(&mv_pl,  &r_buf,  &p_buf);    // a_dot/b_dot unused by matvec
+        let pap_bg  = bg(&dot_pl, &p_buf,  &ap_buf);   // dot(p, ap)
+        let rr_bg   = bg(&dot_pl, &r_buf,  &r_buf);    // dot(r, r)  ← after update_xr
+        let xr_bg   = bg(&xr_pl,  &r_buf,  &p_buf);    // a_dot/b_dot unused by update_xr
+        let p_bg    = bg(&p_pl,   &r_buf,  &p_buf);    // a_dot/b_dot unused by update_p
+
+        // Tiny dot-product readback: reads par_buf (≤ 8192 floats), sums on CPU.
+        let dot_sum = |enc_pre: Option<wgpu::CommandBuffer>| -> Result<f32, SolverError> {
+            // Submit any pending work first.
+            if let Some(cb) = enc_pre { ctx.queue().submit([cb]); }
+            dev.poll(wgpu::MaintainBase::Wait);
+
+            let sz = part_bytes;
+            let stg = dev.create_buffer(&wgpu::BufferDescriptor {
+                label:              Some("cg_stg"),
+                size:               sz,
+                usage:              wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut enc = dev.create_command_encoder(&Default::default());
+            enc.copy_buffer_to_buffer(&par_buf, 0, &stg, 0, sz);
+            ctx.queue().submit([enc.finish()]);
+
+            let (tx, rx) = mpsc::channel::<Result<(), wgpu::BufferAsyncError>>();
+            stg.slice(..).map_async(wgpu::MapMode::Read, move |r| { let _ = tx.send(r); });
+            dev.poll(wgpu::MaintainBase::Wait);
+            match rx.recv() {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => return Err(SolverError::BufferMap(e)),
+                Err(_)     => return Err(SolverError::BufferMap(wgpu::BufferAsyncError)),
+            }
+            let vals = { let v = stg.slice(..).get_mapped_range(); bytemuck::cast_slice::<u8, f32>(&v).to_vec() };
+            stg.unmap();
+            Ok(vals.iter().sum())
+        };
+
+        let dispatch = |pl: &wgpu::ComputePipeline, bg: &wgpu::BindGroup| {
+            let mut enc = dev.create_command_encoder(&Default::default());
+            { let mut pass = enc.begin_compute_pass(&Default::default());
+              pass.set_pipeline(pl);
+              pass.set_bind_group(0, bg, &[]);
+              pass.dispatch_workgroups(wg_count, 1, 1); }
+            enc.finish()
+        };
+
+        // ── PCG iteration loop ────────────────────────────────────────────────
+        let mut final_iter = 0u32;
+        for iter in 0..max_iter {
+            final_iter = iter;
+
+            // 1. ap = A·p
+            ctx.queue().submit([dispatch(&mv_pl, &mv_bg)]);
+            dev.poll(wgpu::MaintainBase::Wait);
+
+            // 2. dot(p, ap) → par_buf
+            ctx.queue().submit([dispatch(&dot_pl, &pap_bg)]);
+            let p_ap = dot_sum(None)?;
+            if p_ap.abs() < 1e-30 { break; }
+
+            // 3. α = ρ_old / (p·ap)
+            cg_par.alpha = rho_old / p_ap;
+            cg_par.beta  = 0.0;   // beta unused in update_xr
+            ctx.queue().write_buffer(&params_buf, 0, bytes_of(&cg_par));
+
+            // 4. x += α·p;  r -= α·ap
+            ctx.queue().submit([dispatch(&xr_pl, &xr_bg)]);
+            dev.poll(wgpu::MaintainBase::Wait);
+
+            // 5. dot(r, r) → par_buf  (residual norm squared)
+            ctx.queue().submit([dispatch(&dot_pl, &rr_bg)]);
+            let r2 = dot_sum(None)?;
+
+            // 6. ρ_new = m_inv · ‖r‖²  (Jacobi preconditioner is scalar)
+            let rho_new = r2 * m_inv;
+
+            // 7. Convergence check: ‖r‖² < tol² · ‖b‖²
+            if r2 < abs_tol2 { break; }
+
+            // 8. β = ρ_new / ρ_old
+            cg_par.beta = rho_new / rho_old;
+            ctx.queue().write_buffer(&params_buf, 0, bytes_of(&cg_par));
+            rho_old = rho_new;
+
+            // 9. p = M⁻¹r + β·p
+            ctx.queue().submit([dispatch(&p_pl, &p_bg)]);
+            dev.poll(wgpu::MaintainBase::Wait);
+        }
+
+        log::info!(
+            "PCG φ: {} iters, α²={alpha_sq:.3e}, ‖r‖/‖b‖={:.2e}, n1={n1}",
+            final_iter + 1,
+            (b_norm2.max(1e-30).sqrt() / b_norm2.max(1e-30).sqrt()),
+        );
         Ok(())
     }
 
