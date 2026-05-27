@@ -132,6 +132,21 @@ impl OracleSolver {
             );
         }
 
+        // ── Phase 2b: Static EED A correction (Yukawa + γ coupling) ─────────
+        // Apply only when α>0 (Yukawa) or γ≠0 with non-trivial φ.
+        // Biot-Savart is exact for α=0, γ=0 — no correction needed then.
+        let alpha_sq_f = (request.eed.alpha * request.eed.alpha) as f32;
+        let gamma_f    = request.eed.gamma as f32;
+        if alpha_sq_f > 0.0 || gamma_f != 0.0 {
+            let n_jacobi_a = (64u32).min(grid.n * 2);
+            gstate.run_jacobi_a_correction(
+                &self.ctx, &grid, alpha_sq_f, gamma_f, n_jacobi_a,
+            )?;
+            // Re-derive B and C from the corrected A.
+            gstate.run_derive_fields(&self.ctx, &grid)?;
+            gstate.run_observables(&self.ctx, &grid)?;
+        }
+
         // ── Phase 3: FDTD ────────────────────────────────────────────────────
         if let SolverMode::TimeDomain { dt_s, n_steps } = cfg.mode {
             let cfl_max = grid.cfl_dt() as f32;
@@ -176,6 +191,9 @@ impl OracleSolver {
             &self.ctx, &gstate, &grid, &request.holonomy_paths,
         );
 
+        let magnetic_helicity = postproc::compute_helicity(&self.ctx, &gstate, &grid);
+        log::info!("Magnetic helicity ∫A·B d³x = {:.4e}", magnetic_helicity);
+
         // ── Volume extraction ────────────────────────────────────────────────
         let volume = if request.request_volume {
             // Guard: if the requested field isn't populated yet, fall back to B.
@@ -210,6 +228,7 @@ impl OracleSolver {
             volume,
             maxima,
             holonomies,
+            magnetic_helicity,
             warnings,
         })
     }

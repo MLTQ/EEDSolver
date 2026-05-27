@@ -157,13 +157,15 @@ export interface HolonomyResult {
 }
 
 export interface SolveResult {
-  solve_time_s: number;
-  grid_cells:   number;   // (cells_per_axis)³
-  slices:       SliceData[];
-  volume:       VolumeData | null;
-  maxima:       FieldMaximum[];
-  holonomies:   HolonomyResult[];
-  warnings:     string[];
+  solve_time_s:      number;
+  grid_cells:        number;   // (cells_per_axis)³
+  slices:            SliceData[];
+  volume:            VolumeData | null;
+  maxima:            FieldMaximum[];
+  holonomies:        HolonomyResult[];
+  /** ∫ A·B d³x  [V·s·T·m²] — non-zero for linked magnetic structures. */
+  magnetic_helicity: number;
+  warnings:          string[];
 }
 
 export interface SolverStatus {

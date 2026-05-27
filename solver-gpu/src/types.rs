@@ -355,6 +355,9 @@ pub struct SolveResult {
     pub volume:       Option<VolumeData>,
     pub maxima:       Vec<FieldMaximum>,
     pub holonomies:   Vec<HolonomyResult>,
+    /// Magnetic helicity ∫ A·B d³x  [V·s/m · T · m³ = V·s·T·m²].
+    /// Non-zero for linked magnetic structures (toroidal solenoids, etc.).
+    pub magnetic_helicity: f64,
     pub warnings:     Vec<String>,
 }
 

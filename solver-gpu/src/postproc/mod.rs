@@ -205,6 +205,39 @@ pub fn extract_volume(
     })
 }
 
+/// Compute magnetic helicity ∫ A·B d³x over the entire domain.
+///
+/// Uses CPU-side dot product after readback (O(n³) but fast for typical grids).
+/// Returns 0.0 if readback fails.
+pub fn compute_helicity(
+    ctx:    &GpuContext,
+    gstate: &GpuGridState,
+    grid:   &YeeGrid,
+) -> f64 {
+    let a_data = match gstate.readback(ctx, &gstate.a_vec, gstate.vec_len()) {
+        Ok(d)  => d,
+        Err(e) => { log::warn!("Helicity readback A failed: {e}"); return 0.0; }
+    };
+    let b_data = match gstate.readback(ctx, &gstate.b_vec, gstate.vec_len()) {
+        Ok(d)  => d,
+        Err(e) => { log::warn!("Helicity readback B failed: {e}"); return 0.0; }
+    };
+
+    let dv = (grid.dx as f64).powi(3);   // volume element [m³]
+
+    let sum: f64 = a_data
+        .chunks_exact(4)
+        .zip(b_data.chunks_exact(4))
+        .map(|(a, b)| {
+            a[0] as f64 * b[0] as f64
+           + a[1] as f64 * b[1] as f64
+           + a[2] as f64 * b[2] as f64
+        })
+        .sum();
+
+    sum * dv
+}
+
 /// Compute holonomy ∮ A·dl for each requested closed path.
 ///
 /// Uses CPU-side trilinear interpolation of the `a_vec` grid.  The path

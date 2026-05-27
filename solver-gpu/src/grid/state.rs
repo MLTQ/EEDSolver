@@ -95,6 +95,17 @@ pub struct ObsParamsGpu {
     pub _pad: [u32; 2],
 }
 
+/// Uniform params for the vector A Jacobi correction kernel.
+/// Must match `JacobiAParams` in `jacobi_a.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct JacobiAParamsGpu {
+    pub dx:    f32,
+    pub m2:    f32,   // α²
+    pub gamma: f32,
+    pub n1:    u32,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GpuGridState
 // ─────────────────────────────────────────────────────────────────────────────
@@ -823,6 +834,174 @@ impl GpuGridState {
         dev.poll(wgpu::MaintainBase::Wait);
 
         log::info!("Observables computed: |P| and u ({} vertices)", n1 * n1 * n1);
+        Ok(())
+    }
+
+    // ── Phase 2b: Static EED vector-potential correction ──────────────────────
+
+    /// Apply the Yukawa + EED γ correction to the static vector potential.
+    ///
+    /// Solves (∇² − α²) A = −μ₀J + γ∇φ  where −μ₀J is encoded via the
+    /// Biot-Savart A already in `self.a_vec`.  The correction δA is computed
+    /// by Jacobi iteration and added back to `a_vec`.
+    ///
+    /// Skip if `alpha_sq == 0.0` and `gamma == 0.0` (Coulomb gauge, pure Biot-Savart).
+    ///
+    /// # Inputs
+    /// - `alpha_sq`: α² [1/m²].  0.0 → no Yukawa correction.
+    /// - `gamma`:    EED coupling γ.  0.0 → no φ→A coupling.
+    /// - `n_iter`:   Jacobi iteration count (64–128 typical).
+    pub fn run_jacobi_a_correction(
+        &mut self,
+        ctx:      &GpuContext,
+        grid:     &YeeGrid,
+        alpha_sq: f32,
+        gamma:    f32,
+        n_iter:   u32,
+    ) -> Result<(), SolverError> {
+        if n_iter == 0 || (alpha_sq == 0.0 && gamma == 0.0) {
+            return Ok(());
+        }
+
+        let dev   = ctx.device();
+        let n1    = self.n1;
+        let total = self.vec_len() as u64;   // n1³ × 4 f32
+        let bytes = total * 4;
+
+        // Scratch δA buffer (ping-pong); starts at zero.
+        let storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
+        let da_ping = dev.create_buffer(&wgpu::BufferDescriptor {
+            label:              Some("da_ping"),
+            size:               bytes,
+            usage:              storage,
+            mapped_at_creation: false,
+        });
+        let da_pong = dev.create_buffer(&wgpu::BufferDescriptor {
+            label:              Some("da_pong"),
+            size:               bytes,
+            usage:              storage,
+            mapped_at_creation: false,
+        });
+
+        let params = JacobiAParamsGpu { dx: grid.dx as f32, m2: alpha_sq, gamma, n1 };
+        let params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:    Some("jacobi_a_params"),
+            contents: bytes_of(&params),
+            usage:    wgpu::BufferUsages::UNIFORM,
+        });
+
+        let shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label:  Some("jacobi_a"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/jacobi_a.wgsl").into()),
+        });
+
+        let pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label:               Some("jacobi_a_step"),
+            layout:              None,
+            module:              &shader,
+            entry_point:         "jacobi_a_step",
+            compilation_options: Default::default(),
+            cache:               None,
+        });
+
+        let wg_count = (n1 * n1 * n1).div_ceil(256);
+
+        // Build bind group for one Jacobi step (da_in → da_out).
+        let make_bg = |da_in: &wgpu::Buffer, da_out: &wgpu::Buffer| {
+            dev.create_bind_group(&wgpu::BindGroupDescriptor {
+                label:   Some("jacobi_a_bg"),
+                layout:  &pipeline.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: da_in.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: da_out.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: self.a_vec.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: self.phi.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 4, resource: params_buf.as_entire_binding() },
+                ],
+            })
+        };
+
+        // Encode all iterations into one command buffer.
+        let mut enc     = dev.create_command_encoder(&Default::default());
+        let mut to_pong = true;   // first write goes to pong (da_ping is input = zero)
+
+        for _ in 0..n_iter {
+            let (da_in, da_out): (&wgpu::Buffer, &wgpu::Buffer) = if to_pong {
+                (&da_ping, &da_pong)
+            } else {
+                (&da_pong, &da_ping)
+            };
+            let bg = make_bg(da_in, da_out);
+            {
+                let mut pass = enc.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &bg, &[]);
+                pass.dispatch_workgroups(wg_count, 1, 1);
+            }
+            to_pong = !to_pong;
+        }
+
+        ctx.queue().submit([enc.finish()]);
+        dev.poll(wgpu::MaintainBase::Wait);
+
+        // Determine which buffer holds the final δA result.
+        // After n_iter steps starting from ping=0 → pong:
+        //   n_iter odd  → result in pong
+        //   n_iter even → result in ping
+        let da_final = if n_iter % 2 == 1 { &da_pong } else { &da_ping };
+
+        // A_EED = A_BS + δA.  We need to add da_final to self.a_vec.
+        // Use a small add kernel via a copy + compute pipeline.
+        // For simplicity: read back δA, add on CPU, re-upload.
+        // (A GPU add kernel would be faster for large grids — Phase 2b opt.)
+        let (tx, rx) = std::sync::mpsc::channel::<Result<(), wgpu::BufferAsyncError>>();
+        let staging = dev.create_buffer(&wgpu::BufferDescriptor {
+            label:              Some("da_staging"),
+            size:               bytes,
+            usage:              wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        {
+            let mut enc2 = dev.create_command_encoder(&Default::default());
+            enc2.copy_buffer_to_buffer(da_final, 0, &staging, 0, bytes);
+            ctx.queue().submit([enc2.finish()]);
+        }
+        staging.slice(..).map_async(wgpu::MapMode::Read, move |r| { let _ = tx.send(r); });
+        dev.poll(wgpu::MaintainBase::Wait);
+        if rx.recv().map_or(true, |r| r.is_err()) {
+            return Err(SolverError::BufferMap(wgpu::BufferAsyncError));
+        }
+
+        let da_vals = {
+            let view = staging.slice(..).get_mapped_range();
+            bytemuck::cast_slice::<u8, f32>(&view).to_vec()
+        };
+        staging.unmap();
+
+        // Read back current A_BS, add δA, re-upload.
+        let a_bs_vals = self.readback(ctx, &self.a_vec, self.vec_len())?;
+        let a_eed: Vec<f32> = a_bs_vals.iter().zip(da_vals.iter())
+            .map(|(a, da)| a + da)
+            .collect();
+
+        let new_a_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:    Some("a_vec_eed"),
+            contents: bytemuck::cast_slice(&a_eed),
+            usage:    wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        });
+
+        // Copy new A into self.a_vec.
+        {
+            let mut enc3 = dev.create_command_encoder(&Default::default());
+            enc3.copy_buffer_to_buffer(&new_a_buf, 0, &self.a_vec, 0, bytes);
+            ctx.queue().submit([enc3.finish()]);
+        }
+        dev.poll(wgpu::MaintainBase::Wait);
+
+        let da_max: f32 = da_vals.iter().copied().map(f32::abs).fold(0.0, f32::max);
+        log::info!(
+            "Jacobi A correction: {n_iter} iters, α²={alpha_sq:.3e}, γ={gamma:.3}, |δA|_max={da_max:.3e}"
+        );
         Ok(())
     }
 }
