@@ -1,14 +1,14 @@
 //! Tauri commands exposed to the frontend via `window.__TAURI__.invoke()`.
 //!
-//! All commands are async and return Result<T, String> — Tauri serializes
+//! All commands are async and return `Result<T, String>` — Tauri serialises
 //! both sides to JSON automatically.
 //!
-//! Command list:
-//!   solve              — full solve pipeline
-//!   get_solver_status  — current solver readiness
-//!   save_hypothesis    — persist a named run to ~/.oracle/hypotheses/
-//!   load_hypotheses    — load all saved runs
-//!   delete_hypothesis  — remove a run by id
+//! # Command list
+//!   `solve`             — full GPU solve pipeline
+//!   `get_solver_status` — GPU readiness
+//!   `save_hypothesis`   — persist a named run to ~/.oracle/hypotheses/
+//!   `load_hypotheses`   — load all saved runs
+//!   `delete_hypothesis` — remove a run by id
 
 use std::fs;
 use std::path::PathBuf;
@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use chrono::Utc;
 use tauri::State;
 
-use crate::solver_client::SolverClient;
+use solver_gpu::OracleSolver;
 use crate::types::{
     HypothesisEntry, SolveRequest, SolveResult, SolverState, SolverStatus,
 };
@@ -25,50 +25,31 @@ use crate::types::{
 // solve
 // ---------------------------------------------------------------------------
 
-/// Run a full field solve. Can take seconds (coarse) to minutes (fine).
+/// Run a full GPU field solve.
 /// The frontend must keep the solve button disabled and show a spinner.
 #[tauri::command]
 pub async fn solve(
-    request: SolveRequest,
-    client: State<'_, SolverClient>,
+    request:  SolveRequest,
+    solver:   State<'_, OracleSolver>,
 ) -> Result<SolveResult, String> {
-    // Quick health check before committing to a long solve
-    match client.health_check().await {
-        Ok(true) => {}
-        Ok(false) => return Err("Solver is not healthy. Check solver logs.".into()),
-        Err(_) => return Err(
-            "Cannot reach solver. Start it: docker compose up solver".into()
-        ),
-    }
-
-    client.solve(&request).await.map_err(Into::into)
+    solver.solve(&request).await.map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
 // get_solver_status
 // ---------------------------------------------------------------------------
 
-/// Check whether the solver process is reachable.
+/// Return current GPU solver readiness.
 /// Frontend polls this on launch to know when to enable the Solve button.
 #[tauri::command]
 pub async fn get_solver_status(
-    client: State<'_, SolverClient>,
+    solver: State<'_, OracleSolver>,
 ) -> Result<SolverStatus, String> {
-    match client.health_check().await {
-        Ok(true) => Ok(SolverStatus {
-            state: SolverState::Ready,
-            message: "Solver ready".into(),
-        }),
-        Ok(false) => Ok(SolverStatus {
-            state: SolverState::Error,
-            message: "Solver responded but unhealthy".into(),
-        }),
-        Err(_) => Ok(SolverStatus {
-            state: SolverState::Starting,
-            message: "Solver not reachable at localhost:7432. \
-                 Run: docker compose up solver".into(),
-        }),
-    }
+    Ok(SolverStatus {
+        state:    SolverState::Ready,
+        message:  format!("GPU solver ready on {}", solver.gpu_name()),
+        gpu_name: Some(solver.gpu_name()),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -79,33 +60,29 @@ pub async fn get_solver_status(
 /// Returns the entry id.
 #[tauri::command]
 pub async fn save_hypothesis(
-    name: String,
+    name:    String,
     request: SolveRequest,
-    result: SolveResult,
-    notes: Option<String>,
+    result:  SolveResult,
+    notes:   Option<String>,
 ) -> Result<String, String> {
-    let dir = hypothesis_dir().map_err(|e| e.to_string())?;
+    let dir = hypothesis_dir()?;
     fs::create_dir_all(&dir).map_err(|e| format!("Cannot create hypothesis dir: {e}"))?;
 
     let timestamp = Utc::now();
-    let id = format!(
-        "{}-{}",
-        timestamp.format("%Y%m%dT%H%M%S"),
-        slug(&name)
-    );
+    let id = format!("{}-{}", timestamp.format("%Y%m%dT%H%M%S"), slug(&name));
 
     let entry = HypothesisEntry {
-        id: id.clone(),
+        id:        id.clone(),
         name,
         timestamp,
         request,
-        maxima: result.maxima,
+        maxima:    result.maxima,
         notes,
     };
 
     let path = dir.join(format!("{id}.json"));
     let json = serde_json::to_string_pretty(&entry)
-        .map_err(|e| format!("Serialization failed: {e}"))?;
+        .map_err(|e| format!("Serialisation failed: {e}"))?;
     fs::write(&path, json).map_err(|e| format!("Write failed: {e}"))?;
 
     log::info!("Saved hypothesis '{}' → {}", entry.name, path.display());
@@ -116,10 +93,10 @@ pub async fn save_hypothesis(
 // load_hypotheses
 // ---------------------------------------------------------------------------
 
-/// Load all saved hypothesis entries, sorted newest first.
+/// Load all saved hypothesis entries, sorted newest-first.
 #[tauri::command]
 pub async fn load_hypotheses() -> Result<Vec<HypothesisEntry>, String> {
-    let dir = hypothesis_dir().map_err(|e| e.to_string())?;
+    let dir = hypothesis_dir()?;
     if !dir.exists() {
         return Ok(vec![]);
     }
@@ -128,13 +105,11 @@ pub async fn load_hypotheses() -> Result<Vec<HypothesisEntry>, String> {
         .map_err(|e| format!("Cannot read hypothesis dir: {e}"))?
         .filter_map(|entry| {
             let entry = entry.ok()?;
-            let path = entry.path();
-            if path.extension()?.to_str()? != "json" {
-                return None;
-            }
+            let path  = entry.path();
+            if path.extension()?.to_str()? != "json" { return None; }
             let content = fs::read_to_string(&path).ok()?;
             match serde_json::from_str::<HypothesisEntry>(&content) {
-                Ok(h) => Some(h),
+                Ok(h)  => Some(h),
                 Err(e) => {
                     log::warn!("Failed to parse hypothesis {}: {e}", path.display());
                     None
@@ -143,7 +118,6 @@ pub async fn load_hypotheses() -> Result<Vec<HypothesisEntry>, String> {
         })
         .collect();
 
-    // Newest first
     entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     Ok(entries)
 }
@@ -155,7 +129,7 @@ pub async fn load_hypotheses() -> Result<Vec<HypothesisEntry>, String> {
 /// Remove a hypothesis entry by id.
 #[tauri::command]
 pub async fn delete_hypothesis(id: String) -> Result<(), String> {
-    let dir = hypothesis_dir().map_err(|e| e.to_string())?;
+    let dir  = hypothesis_dir()?;
     let path = dir.join(format!("{id}.json"));
     if path.exists() {
         fs::remove_file(&path).map_err(|e| format!("Delete failed: {e}"))?;

@@ -66,6 +66,10 @@ export interface SolveRequest {
   formulation:     FormulationType;
   slices:          SliceRequest[];
   request_volume:  boolean;
+  /** Which field to render in the 3-D volume viewer.
+   *  Falls back to the formulation's primary field if this field isn't
+   *  computed by the current formulation (e.g. B_magnitude on scalar_only). */
+  volume_field:    FieldName;
 }
 
 export interface SliceData {
@@ -138,5 +142,6 @@ export function defaultSolveRequest(formulation: FormulationType = "scalar_only"
       { axis: "y", position: 0.5, field, resolution: 128 },
     ],
     request_volume: true,
+    volume_field: field,
   };
 }

@@ -105,6 +105,14 @@ class SolveRequest(BaseModel):
         description="Which 2D slices to extract post-solve",
     )
     request_volume: bool = Field(True, description="Whether to extract 3D volume data")
+    volume_field: FieldName = Field(
+        "phi",
+        description=(
+            "Which field to show in the 3D volume viewer. "
+            "Automatically falls back to the formulation's primary field if the "
+            "requested field is not available (e.g. B_magnitude on scalar_only)."
+        ),
+    )
 
 
 class SolveResult(BaseModel):

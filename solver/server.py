@@ -70,7 +70,12 @@ async def solve(request: SolveRequest) -> SolveResult:
         from solver.fields.postproc import extract_results
 
         solve_output = run_solve(request)
-        result = extract_results(solve_output, request.slices, request.request_volume)
+        result = extract_results(
+            solve_output,
+            request.slices,
+            request.request_volume,
+            volume_field=request.volume_field,
+        )
         log.info(f"Solve complete: {result.solve_time_s:.2f}s, {result.mesh_nodes} nodes")
         return result
 

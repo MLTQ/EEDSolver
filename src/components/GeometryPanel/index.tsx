@@ -124,16 +124,18 @@ interface SliderProps {
 function Slider({ label, unit, value, min, max, step, onChange, fmt }: SliderProps) {
   const display = fmt ? fmt(value) : value % 1 === 0 ? String(value) : value.toFixed(3);
   return (
-    <div className="flex items-center gap-2">
-      <span className="w-14 text-xs text-slate-400 shrink-0">{label}</span>
+    <div className="flex flex-col gap-0.5">
+      <div className="flex justify-between items-baseline">
+        <span className="text-xs text-slate-400">{label}</span>
+        <span className="text-xs text-slate-200 tabular-nums">
+          {display}{unit && <span className="text-slate-500 ml-0.5">{unit}</span>}
+        </span>
+      </div>
       <input
         type="range" min={min} max={max} step={step} value={value}
         onChange={e => onChange(parseFloat(e.target.value))}
-        className="flex-1 h-1 accent-accent cursor-pointer"
+        className="w-full h-1 accent-accent cursor-pointer"
       />
-      <span className="w-16 text-right text-xs text-slate-300 tabular-nums shrink-0">
-        {display}{unit && <span className="text-slate-500 ml-0.5">{unit}</span>}
-      </span>
     </div>
   );
 }

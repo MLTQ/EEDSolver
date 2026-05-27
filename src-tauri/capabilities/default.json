@@ -4,8 +4,6 @@
   "description": "Default Oracle capabilities",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "shell:allow-execute",
-    "shell:allow-open"
+    "core:default"
   ]
 }

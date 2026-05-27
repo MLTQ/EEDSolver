@@ -5,8 +5,11 @@ Wraps LinearProblem into a timed, logged solve with result extraction.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 import logging
+from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
@@ -34,6 +37,30 @@ log = logging.getLogger(__name__)
 WIRE_TAG = 1
 AIR_TAG = 2
 BOUNDARY_TAG = 10
+
+# ---------------------------------------------------------------------------
+# Mesh cache
+# ---------------------------------------------------------------------------
+# Keyed by geometry hash, value = (mesh, cell_tags, facet_tags, stats).
+# Only geometry parameters are hashed — current, α, β, γ are NOT included,
+# so slider changes that don't alter the mesh shape skip the 0.2–20 s
+# Gmsh+dolfinx load step entirely.
+_MESH_CACHE: OrderedDict[str, tuple] = OrderedDict()
+_MESH_CACHE_MAX = 4   # keep at most 4 meshes in memory
+
+
+def _geometry_hash(coil: CoilParams, domain_radius: float, mesh_resolution: str) -> str:
+    """Stable hash of the parameters that determine mesh topology."""
+    key = {
+        "coil_type":     coil.coil_type,
+        "radius_m":      round(coil.radius_m,      9),
+        "turns":         coil.turns,
+        "pitch_m":       round(coil.pitch_m,        9),
+        "wire_radius_m": round(coil.wire_radius_m,  9),
+        "domain_radius": round(domain_radius,        9),
+        "resolution":    mesh_resolution,
+    }
+    return hashlib.md5(json.dumps(key, sort_keys=True).encode()).hexdigest()[:16]
 
 
 class SolveOutput:
@@ -74,7 +101,7 @@ class SolveOutput:
             )
             B_expr = fem.Expression(
                 ufl.curl(self.A),
-                V_B.element.interpolation_points(),
+                V_B.element.interpolation_points,   # property in dolfinx 0.10, not a method
             )
             self._B = fem.Function(V_B)
             self._B.interpolate(B_expr)
@@ -97,20 +124,34 @@ def run_solve(request: SolveRequest) -> SolveOutput:
     warnings: list[str] = []
     t0 = time.perf_counter()
 
-    # 1. Build mesh
-    log.info(f"Building {request.coil.coil_type} geometry...")
-    msh_path = build_coil_geometry(request.coil, request.domain_radius_m)
-    log.info(f"Mesh file: {msh_path}")
+    # 1. Build or reuse mesh
+    geo_hash = _geometry_hash(request.coil, request.domain_radius_m, request.mesh_resolution)
 
-    # 2. Load into dolfinx
-    log.info("Loading mesh into dolfinx...")
-    mesh, cell_tags, facet_tags = load_mesh_from_file(msh_path)
-    stats = get_mesh_stats(mesh)
-    stats["resolution"] = request.mesh_resolution
-    log.info(f"Mesh: {stats['num_cells']} cells, {stats['num_nodes']} nodes")
+    if geo_hash in _MESH_CACHE:
+        log.info(f"Reusing cached mesh [{geo_hash}] (geometry unchanged)")
+        mesh, cell_tags, facet_tags, stats = _MESH_CACHE[geo_hash]
+        # Move to end of LRU order
+        _MESH_CACHE.move_to_end(geo_hash)
+    else:
+        log.info(f"Building {request.coil.coil_type} geometry ({request.mesh_resolution})...")
+        msh_path = build_coil_geometry(
+            request.coil, request.domain_radius_m, request.mesh_resolution
+        )
+        log.info(f"Mesh file: {msh_path}")
 
-    if stats["num_cells"] == 0:
-        raise RuntimeError("Empty mesh — geometry build failed.")
+        log.info("Loading mesh into dolfinx...")
+        mesh, cell_tags, facet_tags = load_mesh_from_file(msh_path)
+        stats = get_mesh_stats(mesh)
+        stats["resolution"] = request.mesh_resolution
+        log.info(f"Mesh: {stats['num_cells']} cells, {stats['num_nodes']} nodes")
+
+        if stats["num_cells"] == 0:
+            raise RuntimeError("Empty mesh — geometry build failed.")
+
+        # Store in cache (evict oldest if over limit)
+        _MESH_CACHE[geo_hash] = (mesh, cell_tags, facet_tags, stats)
+        if len(_MESH_CACHE) > _MESH_CACHE_MAX:
+            _MESH_CACHE.popitem(last=False)
 
     # Warn if wire cells are missing
     wire_cells = cell_tags.find(WIRE_TAG)

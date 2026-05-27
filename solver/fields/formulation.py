@@ -15,13 +15,13 @@ Three formulations:
 
 from __future__ import annotations
 
+import logging
 import numpy as np
 from mpi4py import MPI
 
 import dolfinx
 import dolfinx.fem as fem
 import dolfinx.mesh as dmesh
-import ufl
 import basix.ufl as bufl
 from dolfinx.fem import (
     Constant,
@@ -45,6 +45,8 @@ from ufl import (
 )
 
 from solver.models.params import CoilParams, EEDParams, FormulationType
+
+log = logging.getLogger(__name__)
 
 
 MU0 = 4.0 * np.pi * 1e-7  # Permeability of free space [H/m]
@@ -128,10 +130,20 @@ def _build_scalar_only(mesh, cell_tags, facet_tags, coil_params, eed_params, wir
         V,
     )
 
+    # PCG + Hypre BoomerAMG: optimal for symmetric positive-definite Laplacian-like
+    # operators (CG1). Scales as O(n) per iteration vs MUMPS O(n^1.5–2) fill-in.
     problem = LinearProblem(
         a, L, bcs=[bc],
         petsc_options_prefix="oracle_phi_",
-        petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
+        petsc_options={
+            "ksp_type": "cg",
+            "ksp_rtol": 1e-10,
+            "ksp_max_it": 500,
+            "pc_type": "hypre",
+            "pc_hypre_type": "boomeramg",
+            "pc_hypre_boomeramg_strong_threshold": 0.5,
+            "pc_hypre_boomeramg_agg_nl": 2,
+        },
     )
 
     return problem, V, J_func
@@ -153,6 +165,26 @@ def _build_maxwell_only(mesh, cell_tags, facet_tags, coil_params, eed_params, wi
 
     Function space: N1curl (Nédélec first kind, degree 1) — required for H(curl).
     Do NOT use CG vector elements for A (produces spurious solutions).
+
+    Solver: MUMPS direct solve with Metis ordering.
+    ─────────────────────────────────────────────────────────────────────────
+    HYPRE AMS (the theoretically correct iterative solver for H(curl)) was
+    investigated but does NOT converge on our highly non-uniform coil meshes
+    (100:1 element-size ratio between wire and domain).  Root cause: the
+    dolfinx BC application replaces Dirichlet rows with identity rows
+    (diag=1), creating a diagonal contrast of ~10¹⁰ vs. interior entries
+    that breaks the AMS hierarchy.  Scaling the BC rows to match interior
+    entries (zeroRowsColumns with diag=interior_mean) reduces the contrast
+    to ~120× but AMS still stagnates at ~1.7% relative residual.
+
+    MUMPS is fast for the mesh sizes used interactively:
+      coarse  2 k DOFs →  0.03 s
+      medium 28 k DOFs →  1.67 s
+      fine  ~300 k DOFs → ~15–20 s  (geometry cached; only fresh on first solve)
+
+    AMS could be revisited if petsc4py exposes PCHYPRESetAMSCoordinateVectors
+    (geometric node coordinates, not edge constant vectors), which avoids the
+    null-space stagnation observed with edge vectors on non-uniform meshes.
     """
     V = fem.functionspace(mesh, ("N1curl", 1))
 
@@ -167,17 +199,25 @@ def _build_maxwell_only(mesh, cell_tags, facet_tags, coil_params, eed_params, wi
     L = inner(J_func, v) * dx
 
     # Tangential BC: A × n̂ = 0 on ∂Ω
+    # NOTE: dirichletbc with a numpy constant fails for N1curl because the
+    # block size per DOF is not 3. Use a zero Function instead.
     bc_dofs = _get_boundary_dofs(V, facet_tags, boundary_tag)
-    bc = dirichletbc(
-        np.zeros(3, dtype=dolfinx.default_scalar_type),
-        bc_dofs,
-        V,
-    )
+    zero_A = Function(V)
+    bc = dirichletbc(zero_A, bc_dofs)
 
+    # MUMPS direct solve with Metis reordering.
+    # ICNTL(7)=5 → Metis nested dissection (better fill-in than default AMD for 3D).
+    # ICNTL(14)=50 → 50% extra working memory to avoid OOC on fine meshes.
     problem = LinearProblem(
         a, L, bcs=[bc],
         petsc_options_prefix="oracle_A_",
-        petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
+        petsc_options={
+            "ksp_type": "preonly",
+            "pc_type": "lu",
+            "pc_factor_mat_solver_type": "mumps",
+            "mat_mumps_icntl_7": 5,
+            "mat_mumps_icntl_14": 50,
+        },
     )
 
     return problem, V, J_func
@@ -259,7 +299,11 @@ def _build_eed_coupled(mesh, cell_tags, facet_tags, coil_params, eed_params, wir
         dirichletbc(zero_vector, bc_A_dofs_collapsed, W.sub(1)),
     ]
 
-    # Mixed system: use MUMPS for direct solve (reliable for saddle-point)
+    # Mixed saddle-point system: MUMPS with Metis ordering.
+    # Block preconditioners for (φ,A) mixed systems are complex; MUMPS
+    # with Metis reordering gives reasonable fill-in reduction.
+    # ICNTL(7)=5 → Metis nested dissection (better than default AMD for 3D).
+    # ICNTL(14)=50 → 50% extra working memory to avoid OOC on fine meshes.
     problem = LinearProblem(
         a, L, bcs=bcs,
         petsc_options_prefix="oracle_eed_",
@@ -267,6 +311,8 @@ def _build_eed_coupled(mesh, cell_tags, facet_tags, coil_params, eed_params, wir
             "ksp_type": "preonly",
             "pc_type": "lu",
             "pc_factor_mat_solver_type": "mumps",
+            "mat_mumps_icntl_7": 5,
+            "mat_mumps_icntl_14": 50,
         },
     )
 

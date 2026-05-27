@@ -1,23 +1,25 @@
 /**
- * Primary 3D field visualization using Three.js ray-marched volume rendering.
+ * Primary 3D field visualization using Three.js ray-marched volume rendering
+ * plus a wireframe overlay of the physical coil geometry.
  *
  * The solver returns a normalized [0,1] scalar field on a regular grid.
- * We load it into a Data3DTexture and ray-march through it in a GLSL shader
- * using front-to-back compositing with a viridis/plasma transfer function.
- *
- * Orbit controls let you rotate/zoom freely around the coil.
+ * We load it into a Data3DTexture and ray-march through it in GLSL3.
+ * A TubeGeometry coil is rendered on top so you can see what you're building.
  */
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import type { FieldName, VolumeData } from "../../lib/fieldTypes";
-import { FIELD_LABELS } from "../../lib/fieldTypes";
+import type { CoilParams, CoilType, FieldMaximum, FieldName, VolumeData } from "../../lib/fieldTypes";
+import { FIELD_CHIP_COLOR } from "../../lib/colormap";
 
 interface Props {
   volume:        VolumeData | null;
   selectedField: FieldName;
   isSolving:     boolean;
+  maxima:        FieldMaximum[];
+  coilParams:    CoilParams;
+  domainRadius:  number;          // meters
 }
 
 // ---------------------------------------------------------------------------
@@ -25,7 +27,10 @@ interface Props {
 // ---------------------------------------------------------------------------
 
 const VERT = /* glsl */`
-in vec3 position;
+// NOTE: do NOT redeclare "in vec3 position" here.
+// Three.js r165 prepends "#define attribute in" + "attribute vec3 position;" to
+// every vertex shader, which expands to "in vec3 position;".  A second declaration
+// causes a GLSL ES 3.0 redefinition error on WebKit → silent black output.
 out vec3 vOrigin;
 out vec3 vDirection;
 uniform mat4 uInverseModel;
@@ -49,8 +54,8 @@ uniform int       uColormap;   // 0 = viridis, 1 = plasma
 in vec3 vOrigin;
 in vec3 vDirection;
 out vec4 fragColor;
+// Three.js GLSL3 mode: NO pc_fragColor injection. Must use explicit out var.
 
-// Polynomial viridis approximation (Mateo Zuber / cmasher)
 vec3 viridis(float t) {
   const vec3 c0 = vec3(0.2777, 0.0054, 0.3341);
   const vec3 c1 = vec3(0.1051, 1.4046, 1.3846);
@@ -77,7 +82,6 @@ vec3 transferColor(float t) {
   return uColormap == 0 ? viridis(t) : plasma(t);
 }
 
-// Ray–AABB intersection for unit cube [-0.5, 0.5]^3
 vec2 hitBox(vec3 orig, vec3 dir) {
   vec3 inv = 1.0 / dir;
   vec3 t0 = (vec3(-0.5) - orig) * inv;
@@ -94,22 +98,21 @@ void main() {
   if (bounds.x > bounds.y) discard;
   bounds.x = max(bounds.x, 0.0);
 
-  const int STEPS = 128;
+  const int STEPS = 160;
   float dt = (bounds.y - bounds.x) / float(STEPS);
 
   vec4 accum = vec4(0.0);
   for (int i = 0; i < STEPS; i++) {
     float t   = bounds.x + (float(i) + 0.5) * dt;
     vec3  pos = vOrigin + t * dir;
-    float val = texture(uVolume, pos + 0.5).r;  // [-0.5,0.5] → [0,1]
+    float val = texture(uVolume, pos + 0.5).r;
 
     if (val > uThreshold) {
       float mapped = (val - uThreshold) / max(1.0 - uThreshold, 0.001);
       vec3  col    = transferColor(mapped);
-      float alpha  = mapped * dt * uOpacity * 12.0;
-      alpha = clamp(alpha, 0.0, 0.25);
+      float alpha  = mapped * dt * uOpacity * 18.0;
+      alpha = clamp(alpha, 0.0, 0.3);
 
-      // Front-to-back compositing
       accum.rgb += (1.0 - accum.a) * col * alpha;
       accum.a   += (1.0 - accum.a) * alpha;
       if (accum.a > 0.98) break;
@@ -122,26 +125,195 @@ void main() {
 `;
 
 // ---------------------------------------------------------------------------
+// Coil path generation — mirrors coil.py geometry, physical coords (meters)
+// ---------------------------------------------------------------------------
+
+type Pt3 = [number, number, number];
+
+function buildCoilPath(p: CoilParams): Pt3[] {
+  switch (p.coil_type as CoilType) {
+    case "solenoid":        return solenoidPath(p);
+    case "toroid":          return toroidPath(p);
+    case "toroid_poloidal": return toroidPoloidalPath(p);
+    case "flat_spiral":     return flatSpiralPath(p);
+    case "rodin":           return rodinPath(p);
+    default:                return [];
+  }
+}
+
+/** Continuous helix. */
+function solenoidPath(p: CoilParams): Pt3[] {
+  const R = p.radius_m, N = p.turns, pitch = p.pitch_m;
+  const z0 = -N * pitch / 2;
+  const S = 48;
+  const pts: Pt3[] = [];
+  for (let i = 0; i <= N * S; i++) {
+    const theta = (2 * Math.PI * i) / S;
+    pts.push([R * Math.cos(theta), R * Math.sin(theta), z0 + (i / S) * pitch]);
+  }
+  return pts;
+}
+
+/** N small poloidal loops arranged azimuthally around the torus. */
+function toroidPath(p: CoilParams): Pt3[] {
+  const R = p.radius_m, N = p.turns, pitch = p.pitch_m;
+  const r_minor = Math.max(pitch * N / (2 * Math.PI), p.wire_radius_m * 4);
+  const S = 32;
+  const pts: Pt3[] = [];
+  for (let i = 0; i < N; i++) {
+    const phi = (2 * Math.PI * i) / N;
+    const cx = R * Math.cos(phi), cy = R * Math.sin(phi);
+    for (let j = 0; j <= S; j++) {
+      const theta = (2 * Math.PI * j) / S;
+      // Poloidal loop: in the plane containing the z-axis and radial dir at phi
+      pts.push([
+        cx + r_minor * Math.cos(theta) * Math.cos(phi),
+        cy + r_minor * Math.cos(theta) * Math.sin(phi),
+        r_minor * Math.sin(theta),
+      ]);
+    }
+    // NaN gap so TubeGeometry segments don't connect between loops
+    if (i < N - 1) pts.push([NaN, NaN, NaN]);
+  }
+  return pts;
+}
+
+/** N loops in radial (poloidal) planes — each wound the short way around the torus. */
+function toroidPoloidalPath(p: CoilParams): Pt3[] {
+  const R = p.radius_m, N = p.turns, pitch = p.pitch_m;
+  const r_minor = pitch * N / (2 * Math.PI);
+  const S = 32;
+  const pts: Pt3[] = [];
+  for (let i = 0; i < N; i++) {
+    const phi = (2 * Math.PI * i) / N;
+    const cx = R * Math.cos(phi), cy = R * Math.sin(phi);
+    for (let j = 0; j <= S; j++) {
+      const theta = (2 * Math.PI * j) / S;
+      pts.push([
+        cx + r_minor * Math.cos(theta) * Math.cos(phi),
+        cy + r_minor * Math.cos(theta) * Math.sin(phi),
+        r_minor * Math.sin(theta),
+      ]);
+    }
+    if (i < N - 1) pts.push([NaN, NaN, NaN]);
+  }
+  return pts;
+}
+
+/** Archimedean spiral in the z=0 plane. */
+function flatSpiralPath(p: CoilParams): Pt3[] {
+  const N = p.turns, pitch = p.pitch_m;
+  const r0 = p.radius_m - (N - 1) * pitch / 2;
+  const S = 64;
+  const pts: Pt3[] = [];
+  for (let i = 0; i <= N * S; i++) {
+    const theta = (2 * Math.PI * i) / S;
+    const r = r0 + (i / S) * pitch;
+    if (r > 0) pts.push([r * Math.cos(theta), r * Math.sin(theta), 0]);
+  }
+  return pts;
+}
+
+/** Figure-8 Rodin pattern: alternating-tilt loops arranged on a torus. */
+function rodinPath(p: CoilParams): Pt3[] {
+  const R = p.radius_m, N = p.turns;
+  const r_minor = Math.max(p.pitch_m * N / (2 * Math.PI), p.wire_radius_m * 4);
+  const tilt = Math.PI / 4;
+  const S = 32;
+  const pts: Pt3[] = [];
+  for (let i = 0; i < N; i++) {
+    const phi = (2 * Math.PI * i) / N;
+    const sign = i % 2 === 0 ? 1 : -1;
+    const cx = R * Math.cos(phi), cy = R * Math.sin(phi);
+    const ct = Math.cos(sign * tilt), st = Math.sin(sign * tilt);
+    for (let j = 0; j <= S; j++) {
+      const theta = (2 * Math.PI * j) / S;
+      const cosT = Math.cos(theta), sinT = Math.sin(theta);
+      // Apply tilt: rotate the loop around the radial axis
+      const localR = r_minor * cosT;
+      const localZ = r_minor * sinT * ct;
+      pts.push([
+        cx + localR * Math.cos(phi),
+        cy + localR * Math.sin(phi),
+        localZ + sign * r_minor * st * 0.3,
+      ]);
+    }
+    if (i < N - 1) pts.push([NaN, NaN, NaN]);
+  }
+  return pts;
+}
+
+/**
+ * Build Three.js coil objects from physical path points.
+ * Splits path at NaN gaps so disconnected loops render correctly.
+ * Returns a Group of tubes.
+ */
+function buildCoilGroup(
+  coilParams: CoilParams,
+  maxS: number,       // physical normalizer: world = physical / maxS
+  tubeFraction: number = 0.006,  // tube radius as fraction of world box
+): THREE.Group {
+  const raw = buildCoilPath(coilParams);
+  const scale = 1 / maxS;
+  const tubeR = tubeFraction;
+
+  // Split on NaN sentinels
+  const segments: THREE.Vector3[][] = [];
+  let cur: THREE.Vector3[] = [];
+  for (const [x, y, z] of raw) {
+    if (isNaN(x)) {
+      if (cur.length > 1) segments.push(cur);
+      cur = [];
+    } else {
+      cur.push(new THREE.Vector3(x * scale, y * scale, z * scale));
+    }
+  }
+  if (cur.length > 1) segments.push(cur);
+
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xff8c00,
+    emissive: 0xff6600,
+    emissiveIntensity: 0.6,
+    roughness: 0.4,
+    metalness: 0.2,
+  });
+
+  const group = new THREE.Group();
+  for (const seg of segments) {
+    if (seg.length < 2) continue;
+    const curve = new THREE.CatmullRomCurve3(seg, false, "catmullrom", 0.5);
+    const numSeg = Math.min(seg.length * 3, 512);
+    try {
+      const geo = new THREE.TubeGeometry(curve, numSeg, tubeR, 6, false);
+      group.add(new THREE.Mesh(geo, mat));
+    } catch {
+      // Fallback to line for degenerate curves
+      const pts = curve.getPoints(numSeg);
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      group.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xff8c00 })));
+    }
+  }
+  return group;
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function VolumeViewer({ volume, selectedField, isSolving }: Props) {
-  const canvasRef  = useRef<HTMLDivElement>(null);
-  const sceneRef   = useRef<SceneState | null>(null);
-  const [threshold, setThreshold] = useState(0.05);
-  const [opacity,   setOpacity]   = useState(1.0);
+export function VolumeViewer({ volume, selectedField, isSolving, maxima, coilParams, domainRadius }: Props) {
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const sceneRef  = useRef<SceneState | null>(null);
+  const [threshold, setThreshold] = useState(0.02);
+  const [opacity,   setOpacity]   = useState(1.8);
 
-  // Colormap index: 0=viridis for phi, 1=plasma for others
   const colormap = selectedField === "phi" ? 0 : 1;
 
-  // Setup scene once
+  // Setup scene once on mount
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
-
     const state = initScene(el);
     sceneRef.current = state;
-
     return () => {
       state.controls.dispose();
       state.renderer.dispose();
@@ -149,18 +321,36 @@ export function VolumeViewer({ volume, selectedField, isSolving }: Props) {
     };
   }, []);
 
-  // Update volume texture when data changes
+  // Update volume texture whenever data arrives
   useEffect(() => {
     const state = sceneRef.current;
     if (!state) return;
     if (volume) {
+      console.log("[VolumeViewer] updateVolume:", volume.field, "shape:", volume.shape,
+        "range:", volume.field_min.toExponential(2), "→", volume.field_max.toExponential(2),
+        "data[0..3]:", volume.data.slice(0, 3));
       updateVolume(state, volume);
     } else {
       clearVolume(state);
     }
   }, [volume]);
 
-  // Update uniforms when controls change
+  // Update coil geometry when coil params or volume bounds change
+  useEffect(() => {
+    const state = sceneRef.current;
+    if (!state) return;
+    // Use volume bounds for exact scaling, or fall back to domainRadius
+    const maxS = volume
+      ? Math.max(
+          volume.x_range[1] - volume.x_range[0],
+          volume.y_range[1] - volume.y_range[0],
+          volume.z_range[1] - volume.z_range[0],
+        )
+      : 2 * domainRadius;
+    updateCoil(state, coilParams, maxS);
+  }, [coilParams, domainRadius, volume]);
+
+  // Push uniform changes each frame
   useEffect(() => {
     const state = sceneRef.current;
     if (!state?.material) return;
@@ -169,17 +359,38 @@ export function VolumeViewer({ volume, selectedField, isSolving }: Props) {
     state.material.uniforms.uColormap.value  = colormap;
   }, [threshold, opacity, colormap]);
 
-  return (
-    <div className="relative w-full h-full bg-app">
-      {/* Three.js canvas mount */}
-      <div ref={canvasRef} className="w-full h-full" />
+  const fieldLabel = (f: string) =>
+    ({ phi: "φ", A_magnitude: "|A|", B_magnitude: "|B|", J_magnitude: "|J|" }[f] ?? f);
 
-      {/* Overlay when no data */}
+  const FIELD_UNITS: Record<string, string> = {
+    phi: "V", A_magnitude: "Wb/m", B_magnitude: "T", J_magnitude: "A/m²",
+  };
+
+  /** Format a raw SI value to human-readable with metric prefix (μ, m, k…) */
+  const fmtSI = (v: number, unit: string): string => {
+    const a = Math.abs(v);
+    if (a === 0) return `0 ${unit}`;
+    if (a >= 1e6)  return `${(v / 1e6).toPrecision(3)} M${unit}`;
+    if (a >= 1e3)  return `${(v / 1e3).toPrecision(3)} k${unit}`;
+    if (a >= 1)    return `${v.toPrecision(3)} ${unit}`;
+    if (a >= 1e-3) return `${(v * 1e3).toPrecision(3)} m${unit}`;
+    if (a >= 1e-6) return `${(v * 1e6).toPrecision(3)} μ${unit}`;
+    if (a >= 1e-9) return `${(v * 1e9).toPrecision(3)} n${unit}`;
+    return `${v.toExponential(2)} ${unit}`;
+  };
+
+  return (
+    <div className="absolute inset-0 bg-app overflow-hidden">
+
+      {/* Three.js mount point */}
+      <div ref={canvasRef} className="absolute inset-0" />
+
+      {/* Empty-state overlay */}
       {!volume && !isSolving && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="text-center">
-            <div className="text-4xl mb-3 opacity-20">⬡</div>
-            <div className="text-slate-600 text-xs">Configure a coil and press Solve</div>
+            <div className="text-5xl mb-4 opacity-10">⬡</div>
+            <div className="text-slate-600 text-xs">Adjust controls — field updates automatically</div>
           </div>
         </div>
       )}
@@ -187,28 +398,45 @@ export function VolumeViewer({ volume, selectedField, isSolving }: Props) {
       {/* Solving spinner */}
       {isSolving && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="text-center">
-            <Spinner />
-            <div className="text-slate-500 text-xs mt-3">Solving…</div>
-          </div>
+          <Spinner />
         </div>
       )}
 
-      {/* Field label */}
+      {/* Top-left: active field max — prominent, updates with every solve */}
       {volume && (
-        <div className="absolute top-3 left-3 text-xs text-slate-500 pointer-events-none">
-          {FIELD_LABELS[volume.field]}
-          <span className="ml-2 text-slate-600">
-            [{volume.field_min.toExponential(2)}, {volume.field_max.toExponential(2)}]
+        <div className="absolute top-3 left-3 pointer-events-none flex flex-col gap-0.5">
+          <span className="text-[10px] text-slate-500 uppercase tracking-wider">
+            {fieldLabel(volume.field)} · peak
+          </span>
+          <span className="text-base font-semibold tabular-nums text-slate-100">
+            {fmtSI(volume.field_max, FIELD_UNITS[volume.field] ?? "")}
+          </span>
+          <span className="text-[10px] text-slate-600 tabular-nums">
+            min {fmtSI(volume.field_min, FIELD_UNITS[volume.field] ?? "")}
+            &nbsp;· normalized view
           </span>
         </div>
       )}
 
-      {/* Transfer function controls */}
+      {/* Top-right: per-field maxima table */}
+      {maxima.length > 0 && (
+        <div className="absolute top-3 right-3 flex flex-col items-end gap-1 pointer-events-none">
+          {maxima.map(m => (
+            <span
+              key={m.field}
+              className={`text-xs tabular-nums px-2 py-0.5 rounded ${FIELD_CHIP_COLOR[m.field as FieldName]}`}
+            >
+              {fieldLabel(m.field)} {fmtSI(m.max_value, FIELD_UNITS[m.field] ?? "")}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Bottom-right: transfer-function controls */}
       <div className="absolute bottom-3 right-3 flex flex-col gap-2 w-44 bg-app/80 backdrop-blur-sm rounded border border-rim p-2">
-        <Control label="Threshold" value={threshold} min={0} max={0.9} step={0.01}
+        <Control label="Threshold" value={threshold} min={0}   max={0.9} step={0.01}
           onChange={setThreshold} fmt={v => v.toFixed(2)} />
-        <Control label="Opacity"   value={opacity}   min={0.1} max={4} step={0.1}
+        <Control label="Opacity"   value={opacity}   min={0.1} max={6}   step={0.1}
           onChange={setOpacity}   fmt={v => v.toFixed(1)} />
       </div>
     </div>
@@ -220,27 +448,36 @@ export function VolumeViewer({ volume, selectedField, isSolving }: Props) {
 // ---------------------------------------------------------------------------
 
 interface SceneState {
-  renderer:  THREE.WebGLRenderer;
-  scene:     THREE.Scene;
-  camera:    THREE.PerspectiveCamera;
-  controls:  OrbitControls;
-  mesh:      THREE.Mesh;
-  material:  THREE.ShaderMaterial;
-  texture:   THREE.Data3DTexture | null;
-  animId:    number;
+  renderer:   THREE.WebGLRenderer;
+  scene:      THREE.Scene;
+  camera:     THREE.PerspectiveCamera;
+  controls:   OrbitControls;
+  mesh:       THREE.Mesh;
+  material:   THREE.ShaderMaterial;
+  texture:    THREE.Data3DTexture | null;
+  coilGroup:  THREE.Group;
+  animId:     number;
 }
 
 function initScene(container: HTMLDivElement): SceneState {
-  const w = container.clientWidth;
-  const h = container.clientHeight;
+  const w = container.clientWidth  || container.offsetWidth  || 800;
+  const h = container.clientHeight || container.offsetHeight || 600;
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setSize(w, h);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setClearColor(0x09090d, 1);
+  renderer.shadowMap.enabled = false;
   container.appendChild(renderer.domElement);
 
   const scene  = new THREE.Scene();
+
+  // Ambient + directional light for the coil tubes
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+  dirLight.position.set(2, 3, 2);
+  scene.add(dirLight);
+
   const camera = new THREE.PerspectiveCamera(50, w / h, 0.01, 100);
   camera.position.set(1.6, 1.1, 1.6);
 
@@ -251,28 +488,36 @@ function initScene(container: HTMLDivElement): SceneState {
   controls.maxDistance   = 8;
 
   const material = new THREE.ShaderMaterial({
-    glslVersion:  THREE.GLSL3,
+    glslVersion:    THREE.GLSL3,
     vertexShader:   VERT,
     fragmentShader: FRAG,
     uniforms: {
       uVolume:       { value: null },
-      uThreshold:    { value: 0.05 },
-      uOpacity:      { value: 1.0 },
+      uThreshold:    { value: 0.02 },
+      uOpacity:      { value: 1.8 },
       uColormap:     { value: 0 },
       uInverseModel: { value: new THREE.Matrix4() },
     },
     side:        THREE.BackSide,
     transparent: true,
+    depthTest:   false,   // Don't depth-clip against coil tubes or other opaques
     depthWrite:  false,
   });
 
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
+  mesh.renderOrder = 0;   // Render volume first (depthTest disabled, transparent)
   scene.add(mesh);
+
+  // Coil group — rendered after the volume so tubes appear on top
+  const coilGroup = new THREE.Group();
+  coilGroup.renderOrder = 1;
+  scene.add(coilGroup);
 
   // Resize observer
   const ro = new ResizeObserver(() => {
     const nw = container.clientWidth;
     const nh = container.clientHeight;
+    if (nw === 0 || nh === 0) return;
     renderer.setSize(nw, nh);
     camera.aspect = nw / nh;
     camera.updateProjectionMatrix();
@@ -284,23 +529,19 @@ function initScene(container: HTMLDivElement): SceneState {
   function animate() {
     animId = requestAnimationFrame(animate);
     controls.update();
-    // Keep inverse model matrix in sync (mesh stays at origin but mat may rotate)
     mesh.updateMatrixWorld();
     material.uniforms.uInverseModel.value.copy(mesh.matrixWorld).invert();
     renderer.render(scene, camera);
   }
   animate();
 
-  return { renderer, scene, camera, controls, mesh, material, texture: null, animId };
+  return { renderer, scene, camera, controls, mesh, material, texture: null, coilGroup, animId };
 }
 
 function updateVolume(state: SceneState, vol: VolumeData) {
   const [nx, ny, nz] = vol.shape;
-
-  // Build Float32Array from normalized data
   const raw = new Float32Array(vol.data);
 
-  // Dispose old texture
   state.texture?.dispose();
 
   const tex = new THREE.Data3DTexture(raw, nx, ny, nz);
@@ -317,19 +558,32 @@ function updateVolume(state: SceneState, vol: VolumeData) {
   state.texture = tex;
   state.material.uniforms.uVolume.value = tex;
 
-  // Scale the box to physical aspect ratio
   const [x0, x1] = vol.x_range;
   const [y0, y1] = vol.y_range;
   const [z0, z1] = vol.z_range;
   const sx = x1 - x0, sy = y1 - y0, sz = z1 - z0;
   const maxS = Math.max(sx, sy, sz);
   state.mesh.scale.set(sx / maxS, sy / maxS, sz / maxS);
+
+  console.log("[VolumeViewer] texture uploaded:", nx, "×", ny, "×", nz,
+    "box scale:", (sx/maxS).toFixed(3), (sy/maxS).toFixed(3), (sz/maxS).toFixed(3));
 }
 
 function clearVolume(state: SceneState) {
   state.texture?.dispose();
   state.texture = null;
   state.material.uniforms.uVolume.value = null;
+}
+
+function updateCoil(state: SceneState, coilParams: CoilParams, maxS: number) {
+  // Remove old coil geometry
+  state.coilGroup.clear();
+
+  const group = buildCoilGroup(coilParams, maxS);
+  state.coilGroup.add(group);
+
+  console.log("[VolumeViewer] coil updated:", coilParams.coil_type,
+    "turns:", coilParams.turns, "r:", coilParams.radius_m, "maxS:", maxS.toFixed(3));
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +611,9 @@ function Control({
 
 function Spinner() {
   return (
-    <div className="w-8 h-8 mx-auto border-2 border-slate-700 border-t-accent rounded-full animate-spin" />
+    <div className="flex flex-col items-center gap-3">
+      <div className="w-8 h-8 border-2 border-slate-700 border-t-accent rounded-full animate-spin" />
+      <span className="text-xs text-slate-600">Solving…</span>
+    </div>
   );
 }

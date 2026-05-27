@@ -6,6 +6,7 @@ Converts dolfinx Functions → flat float arrays for JSON transport.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Callable
 
 import numpy as np
@@ -44,18 +45,31 @@ VOLUME_FIELD_FOR_FORMULATION = {
     "eed_coupled": "phi",
 }
 
+# Which fields each formulation actually computes (used for volume_field fallback)
+FIELDS_BY_FORMULATION: dict[str, set[str]] = {
+    "scalar_only": {"phi", "J_magnitude"},
+    "maxwell_only": {"A_magnitude", "B_magnitude", "J_magnitude"},
+    "eed_coupled": {"phi", "A_magnitude", "B_magnitude", "J_magnitude"},
+}
+
 
 def extract_results(
     solve_output,   # SolveOutput from solver.py
     slice_requests: list[SliceRequest],
     request_volume: bool = True,
+    volume_field: FieldName | None = None,
 ) -> SolveResult:
     """
     Extract all requested slices + field maxima from solve output.
     Returns a fully populated SolveResult ready for JSON serialization.
+
+    volume_field: which field to render in the 3D viewer. Falls back to the
+    formulation's primary field if the requested field is not available.
     """
     from solver.fields.solver import SolveOutput  # avoid circular at module level
     assert isinstance(solve_output, SolveOutput)
+
+    t_post = time.perf_counter()
 
     slices = []
     for req in slice_requests:
@@ -67,10 +81,24 @@ def extract_results(
             slices.append(_zero_slice(req))
 
     maxima = extract_maxima(solve_output)
+    log.debug(f"Maxima extracted in {time.perf_counter() - t_post:.3f}s")
 
     volume = None
     if request_volume:
-        vol_field = VOLUME_FIELD_FOR_FORMULATION.get(solve_output.formulation, "phi")
+        # Honour the caller's field request; fall back to the formulation's
+        # primary field if that field is not computed by this formulation.
+        primary = VOLUME_FIELD_FOR_FORMULATION.get(solve_output.formulation, "phi")
+        available = FIELDS_BY_FORMULATION.get(solve_output.formulation, set())
+        if volume_field and volume_field in available:
+            vol_field = volume_field
+        else:
+            if volume_field and volume_field != primary:
+                log.info(
+                    f"Requested volume field '{volume_field}' not available for "
+                    f"'{solve_output.formulation}' (available: {sorted(available)}); "
+                    f"using '{primary}' instead."
+                )
+            vol_field = primary
         resolution = VOLUME_RESOLUTION.get(
             solve_output.mesh_stats.get("resolution", "coarse"), 32
         )
@@ -134,7 +162,8 @@ def extract_slice(solve_output, request: SliceRequest) -> SliceData:
         log.warning(f"Field {request.field} not available for formulation {solve_output.formulation}")
         values = np.zeros(n * n)
     else:
-        values = _sample_field_at_points(field_func, mesh, pts, request.field)
+        bb_tree = geom.bb_tree(mesh, mesh.topology.dim)
+        values = _sample_field_at_points(field_func, mesh, pts, request.field, bb_tree)
 
     grid = values.reshape(n, n)
 
@@ -179,17 +208,46 @@ def extract_volume(
     if field_func is None:
         values = np.zeros(resolution ** 3)
     else:
-        values = _sample_field_at_points(field_func, mesh, pts, field_name)
+        bb_tree = geom.bb_tree(mesh, mesh.topology.dim)   # build once, reuse below
+        values = _sample_field_at_points(field_func, mesh, pts, field_name, bb_tree)
 
-    values = np.nan_to_num(values, nan=0.0)
+    values = np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
     fmin = float(values.min())
     fmax = float(values.max())
 
-    # Normalize to [0, 1]
-    if fmax > fmin:
-        normalized = (values - fmin) / (fmax - fmin)
+    # Normalize absolute value to [0, 1].
+    # Using abs() means the 3-D viewer always shows *field strength*, not signed
+    # scalar — critical for EED φ which is naturally bipolar around the coil.
+    # fmin/fmax (signed) are still reported for the info overlay.
+    values_abs = np.abs(values)
+
+    # Clip at the 99th percentile of non-zero values before normalising.
+    #
+    # Why: near the coil wire the FEM field can be geometrically singular
+    # (especially on coarse meshes). A single sample voxel at the wire
+    # surface can be 100-1000× stronger than the interior field, compressing
+    # everything else to < 1 % of the display range → invisible.
+    # Clipping the top 1 % of non-zero values restores the interior structure.
+    pos_vals = values_abs[values_abs > 0]
+    if len(pos_vals) > 10:
+        clip_val = float(np.percentile(pos_vals, 99))
+        values_abs = np.clip(values_abs, 0.0, clip_val)
+
+    abs_max = float(values_abs.max())
+    if abs_max > 0:
+        normalized = values_abs / abs_max
     else:
-        normalized = np.zeros_like(values)
+        normalized = np.zeros_like(values_abs)
+
+    # Reorder from Python meshgrid layout (x-major, indexing="ij") to WebGL
+    # Data3DTexture layout (z-major / depth-first).
+    #
+    # Python produces flat index:  ix*ny*nz + iy*nz + iz  → field at (xs[ix], ys[iy], zs[iz])
+    # WebGL expects flat index:    iz*nx*ny + iy*nx + ix   → texel at (u=ix/nx, v=iy/ny, w=iz/nz)
+    #
+    # Reshape (nx,ny,nz), transpose to (nz,ny,nx), then flatten C-order.
+    n = resolution
+    normalized = normalized.reshape(n, n, n).transpose(2, 1, 0).ravel()
 
     log.info(
         f"Volume extracted: {resolution}³ = {len(values)} pts, "
@@ -210,38 +268,43 @@ def extract_volume(
 
 def extract_maxima(solve_output) -> list[FieldMaximum]:
     """
-    Find and return the global maximum for each available field.
-    Samples on a coarse volume grid for speed.
+    Find the global maximum for each available field directly from DoF arrays.
+
+    CG1 and DG0 functions store their values at nodes/cell-centres respectively,
+    so np.max(abs(func.x.array)) gives the exact FEM maximum with O(n_dofs)
+    cost — no point sampling or BoundingBoxTree needed.  This replaces the old
+    32³-grid approach (163 K BoundingBoxTree look-ups per solve → ~5 s) with a
+    sub-millisecond array reduction.
     """
-    mesh = solve_output.mesh
-    coords = mesh.geometry.x
-    xmin, xmax = coords[:, 0].min(), coords[:, 0].max()
-    ymin, ymax = coords[:, 1].min(), coords[:, 1].max()
-    zmin, zmax = coords[:, 2].min(), coords[:, 2].max()
-
-    n_sample = 32  # coarse grid for maxima search
-    xs = np.linspace(xmin, xmax, n_sample)
-    ys = np.linspace(ymin, ymax, n_sample)
-    zs = np.linspace(zmin, zmax, n_sample)
-    xx, yy, zz = np.meshgrid(xs, ys, zs, indexing="ij")
-    pts = np.stack([xx.ravel(), yy.ravel(), zz.ravel()], axis=1)
-
     maxima = []
+
     for field_name in ("phi", "A_magnitude", "B_magnitude", "J_magnitude"):
-        field_func = _get_field_function(solve_output, field_name)
-        if field_func is None:
+        func = _get_field_function(solve_output, field_name)
+        if func is None:
             continue
         try:
-            values = _sample_field_at_points(field_func, mesh, pts, field_name)
-            valid = np.isfinite(values)
+            arr = func.x.array
+            if not len(arr):
+                continue
+            abs_arr = np.abs(arr)
+            valid = np.isfinite(abs_arr)
             if not valid.any():
                 continue
-            idx = np.nanargmax(np.where(valid, values, -np.inf))
-            loc = pts[idx].tolist()
+
+            idx = int(np.argmax(np.where(valid, abs_arr, -np.inf)))
+            max_val = float(abs_arr[idx])
+
+            # Spatial location: CG1 DoFs are at mesh nodes
+            try:
+                coords = func.function_space.tabulate_dof_coordinates()
+                max_loc = coords[idx % len(coords)].tolist()
+            except Exception:
+                max_loc = [0.0, 0.0, 0.0]
+
             maxima.append(FieldMaximum(
                 field=field_name,
-                max_value=float(values[idx]),
-                max_location=loc,
+                max_value=max_val,
+                max_location=max_loc,
             ))
         except Exception as exc:
             log.warning(f"Maxima extraction failed for {field_name}: {exc}")
@@ -257,43 +320,73 @@ def _get_field_function(solve_output, field_name: FieldName):
     """
     Return the dolfinx Function (or derived expression) for the requested field.
     Returns None if the field is not available for the current formulation.
+
+    Magnitude functions (A_magnitude, B_magnitude, J_magnitude) are cached on
+    the solve_output object after the first call so that extract_maxima and
+    extract_volume don't each trigger a separate L2 projection solve.
     """
     if field_name == "phi":
         return solve_output.phi  # None for maxwell_only
 
-    elif field_name == "A_magnitude":
-        if solve_output.A is None:
-            return None
-        # |A| = sqrt(A·A), scalar function
-        return _make_magnitude_function(solve_output.A, solve_output.mesh)
+    # For vector-magnitude fields: compute once, cache on solve_output
+    cache_attr = f"_cached_{field_name}"
+    if hasattr(solve_output, cache_attr):
+        return getattr(solve_output, cache_attr)
+
+    result = None
+    if field_name == "A_magnitude":
+        if solve_output.A is not None:
+            result = _make_magnitude_function(solve_output.A, solve_output.mesh)
 
     elif field_name == "B_magnitude":
         B = solve_output.B  # lazy property, None if A=None
-        if B is None:
-            return None
-        return _make_magnitude_function(B, solve_output.mesh)
+        if B is not None:
+            result = _make_magnitude_function(B, solve_output.mesh)
 
     elif field_name == "J_magnitude":
-        if solve_output.J is None:
-            return None
-        return _make_magnitude_function(solve_output.J, solve_output.mesh)
+        if solve_output.J is not None:
+            result = _make_magnitude_function(solve_output.J, solve_output.mesh)
 
     else:
         raise ValueError(f"Unknown field: {field_name}")
+
+    # Cache (even if None — so we don't retry a field that's genuinely absent)
+    setattr(solve_output, cache_attr, result)
+    return result
 
 
 def _make_magnitude_function(vec_func: dolfinx.fem.Function, mesh) -> dolfinx.fem.Function:
     """
     Create a scalar CG1 function holding |v| = sqrt(v·v) for a vector function v.
+
+    Uses L2 projection (Galerkin weak form) instead of pointwise interpolation.
+    Pointwise interpolation from N1curl (Nedelec) elements is noisy because
+    Nedelec elements only enforce tangential continuity — the normal component
+    is discontinuous at element boundaries.  The L2 projection:
+
+        ∫ u·w dx = ∫ |v|·w dx   ∀ w ∈ CG1
+
+    produces a globally-smooth field that correctly averages the inter-element
+    discontinuities, giving a physically interpretable magnitude map.
     """
+    import ufl as _ufl
+    from dolfinx.fem.petsc import LinearProblem
+
     V_scalar = fem.functionspace(mesh, ("CG", 1))
-    mag_expr = fem.Expression(
-        sqrt(inner(vec_func, vec_func)),
-        V_scalar.element.interpolation_points,   # property in dolfinx 0.10, not a method
+    u = _ufl.TrialFunction(V_scalar)
+    w = _ufl.TestFunction(V_scalar)
+
+    mag_expr = sqrt(inner(vec_func, vec_func))
+    a_form = _ufl.inner(u, w) * _ufl.dx
+    L_form = _ufl.inner(mag_expr, w) * _ufl.dx
+
+    problem = LinearProblem(
+        a_form, L_form,
+        bcs=[],
+        petsc_options_prefix="oracle_mag_",
+        petsc_options={"ksp_type": "cg", "pc_type": "jacobi", "ksp_rtol": 1e-8},
     )
-    mag_func = fem.Function(V_scalar)
-    mag_func.interpolate(mag_expr)
-    return mag_func
+    return problem.solve()
 
 
 # ---------------------------------------------------------------------------
@@ -305,44 +398,48 @@ def _sample_field_at_points(
     mesh: dolfinx.mesh.Mesh,
     points: np.ndarray,
     field_name: str,
+    bb_tree=None,
 ) -> np.ndarray:
     """
     Sample a scalar dolfinx Function at an array of 3D points.
-    Points outside the mesh get NaN (replaced with 0.0 in output).
+    Points outside the mesh return 0.0.
 
-    Uses dolfinx BoundingBoxTree for efficient point location.
+    Accepts a pre-built bb_tree so callers that evaluate multiple fields on the
+    same grid (extract_volume, extract_slice) can build the tree once and reuse.
+
+    The inner loop over colliding_cells.links(i) was the dominant cost for
+    large grids (~5 s on 32³ with a coarse mesh).  This version replaces it
+    with vectorised numpy operations on the AdjacencyList's flat .array /
+    .offsets buffers — O(N) numpy instead of O(N) Python, ~100× faster.
     """
-    bb_tree = geom.bb_tree(mesh, mesh.topology.dim)
+    if bb_tree is None:
+        bb_tree = geom.bb_tree(mesh, mesh.topology.dim)
+
     cell_candidates = geom.compute_collisions_points(bb_tree, points)
     colliding_cells = geom.compute_colliding_cells(mesh, cell_candidates, points)
 
-    values = np.full(len(points), 0.0, dtype=np.float64)
+    # --- vectorised valid-point extraction -----------------------------------
+    # AdjacencyList layout:
+    #   offsets[i], offsets[i+1]  → slice in .array for point i
+    #   array[offsets[i]]         → first colliding cell for point i
+    offsets   = colliding_cells.offsets          # shape (N+1,)
+    cell_arr  = colliding_cells.array            # flat, dtype int32
 
-    # Collect points with valid cells
-    valid_pts = []
-    valid_cells = []
-    valid_indices = []
+    n_links      = np.diff(offsets)              # number of colliding cells per point
+    valid_mask   = n_links > 0                   # True for in-mesh points
+    valid_indices = np.where(valid_mask)[0]
 
-    for i, pt in enumerate(points):
-        cells = colliding_cells.links(i)
-        if len(cells) > 0:
-            valid_pts.append(pt)
-            valid_cells.append(cells[0])
-            valid_indices.append(i)
+    values = np.zeros(len(points), dtype=np.float64)
 
-    if valid_pts:
-        valid_pts_arr = np.array(valid_pts, dtype=np.float64)
-        valid_cells_arr = np.array(valid_cells, dtype=np.int32)
+    if len(valid_indices):
+        first_cells = cell_arr[offsets[valid_indices]].astype(np.int32)
+        valid_pts   = points[valid_indices]      # already float64
 
-        # Evaluate field at valid points
-        eval_values = field_func.eval(valid_pts_arr, valid_cells_arr)
-
-        # eval returns shape (N, value_size) — take first component for scalar
+        eval_values = field_func.eval(valid_pts, first_cells)
         if eval_values.ndim == 2:
             eval_values = eval_values[:, 0]
 
-        for idx, val in zip(valid_indices, eval_values):
-            values[idx] = float(val)
+        values[valid_indices] = eval_values
 
     return values
 

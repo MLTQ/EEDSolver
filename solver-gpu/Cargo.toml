@@ -1,0 +1,18 @@
+[package]
+name    = "solver-gpu"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# GPU backend — Metal on macOS, Vulkan on Linux/Windows, DX12 on Windows
+wgpu    = "22"
+# Async runtime (shared with Tauri)
+tokio   = { version = "1", features = ["full"] }
+# Serialisation (types shared with Tauri shell)
+serde   = { version = "1", features = ["derive"] }
+# Logging
+log     = "0.4"
+# Error handling
+thiserror = "1"
+# Bytemuck for GPU buffer casting
+bytemuck  = { version = "1", features = ["derive"] }

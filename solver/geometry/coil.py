@@ -13,10 +13,20 @@ Physical groups tagged in output mesh:
   "coil_wire"      — wire volume (current source region)
   "air_domain"     — surrounding air/vacuum
   "boundary_sphere"— outer boundary (ABC/Dirichlet BCs applied here)
+
+Wire geometry:
+  For axis="z" coils (solenoid, flat_spiral), each loop is modelled as an
+  annular cylinder (cylindrical ring with square cross-section) via
+  addCylinder+cut rather than addTorus.  The OCC torus primitive has a
+  parametric seam singularity that causes the Gmsh 2D mesher to produce
+  degenerate "equivalent triangles" when minor_r << major_r (thin wire),
+  which then crashes 3D mesh generation.  The cylinder Boolean approach
+  avoids this entirely.
 """
 
 from __future__ import annotations
 
+import logging
 import math
 import tempfile
 from pathlib import Path
@@ -25,25 +35,45 @@ import gmsh
 
 from solver.models.params import CoilParams
 
+log = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def build_coil_geometry(params: CoilParams, domain_radius_m: float) -> Path:
+def build_coil_geometry(
+    params: CoilParams,
+    domain_radius_m: float,
+    mesh_resolution: str = "medium",
+) -> Path:
     """
     Build the Gmsh geometry for the requested coil type and domain.
     Returns path to the generated .msh file (in a temp directory).
     Caller is responsible for cleanup if needed.
     """
+    # Guard: if a previous solve crashed (SEGV / hard kill) without calling
+    # gmsh.finalize(), Gmsh's internal singleton is already initialized.
+    # Calling gmsh.initialize() a second time is a no-op in newer Gmsh but
+    # was a hard crash in some builds.  Calling finalize + re-initialize is safe.
+    if gmsh.isInitialized():
+        log.warning("Gmsh already initialized (leftover from a prior crash) — finalizing first")
+        gmsh.finalize()
+
     gmsh.initialize()
-    gmsh.option.setNumber("General.Verbosity", 1)
+    gmsh.option.setNumber("General.Verbosity", 3)   # 1=silent, 3=warnings+errors, 5=debug
     gmsh.model.add("oracle_coil")
+    log.info(
+        f"Building {params.coil_type} geometry: "
+        f"r={params.radius_m}m, rw={params.wire_radius_m}m, "
+        f"n={params.turns}, pitch={params.pitch_m}m, domain={domain_radius_m}m"
+    )
 
     try:
         _dispatch_coil(params, domain_radius_m)
-        msh_path = _finalize_and_mesh(params)
+        msh_path = _finalize_and_mesh(params, domain_radius_m, mesh_resolution)
     except Exception:
+        log.exception("EXCEPTION during geometry/mesh build")
         gmsh.finalize()
         raise
 
@@ -258,26 +288,71 @@ def _add_torus(
     extra_tilt: float = 0.0,
 ) -> int:
     """
-    Add a torus (tube) to the Gmsh model. Returns the volume tag.
-    axis="z"      — torus axis aligned with z
-    axis="radial" — torus axis in the radial direction at radial_angle
+    Add a wire ring to the Gmsh model. Returns the volume tag.
+    axis="z"      — ring axis aligned with z
+    axis="radial" — ring axis in the radial direction at radial_angle
+
+    For axis="z": uses a SQUARE cross-section revolved 360° instead of
+    gmsh.model.occ.addTorus.  The OCC addTorus creates a B-spline surface
+    with a parametric "seam" singularity at φ=0.  When minor_r << major_r
+    (e.g. 1mm wire inside a 50mm coil), the 2D surface mesher encounters
+    degenerate "equivalent triangles" near the seam → "Invalid boundary mesh"
+    → 3D meshing crash.
+
+    The rectangular revolve creates 4 clean surfaces (top annulus, bottom
+    annulus, inner cylinder, outer cylinder) with no seam topology, which the
+    2D mesher handles correctly.
     """
     cx, cy, _ = center
     cz = z_center
 
     if axis == "z":
-        tag = gmsh.model.occ.addTorus(cx, cy, cz, major_r, minor_r)
+        # --- cylindrical ring (annular washer) via addCylinder + cut ------
+        #
+        # We model each wire loop as a cylindrical ring (square cross-section)
+        # rather than a circular-cross-section torus.  This avoids two
+        # well-known Gmsh/OCC failure modes for thin tori:
+        #
+        #  1. addTorus seam singularity → "equivalent triangles" in 2D mesher
+        #     → "Invalid boundary mesh (overlapping facets)" → 3D SEGV.
+        #
+        #  2. Full-2π revolve of a planar rectangle → leftover seam-edge nodes
+        #     that are NOT referenced by any tet element → dolfinx
+        #     extract_geometry AssertionError (non-contiguous node indices).
+        #
+        # Cylinder Boolean cut has simple, well-tested OCC topology:
+        #   outer cylinder radius = major_r + minor_r
+        #   inner cylinder radius = major_r - minor_r
+        #   height = 2 * minor_r   (centered at z_center)
+        #   result: 4 clean surfaces (outer cyl, inner cyl, top annulus, bottom annulus)
+        z_base = cz - minor_r
+        height = 2.0 * minor_r
+        r_out  = major_r + minor_r
+        r_in   = major_r - minor_r
+
+        outer = gmsh.model.occ.addCylinder(cx, cy, z_base, 0, 0, height, r_out)
+        inner = gmsh.model.occ.addCylinder(cx, cy, z_base, 0, 0, height, r_in)
+
+        # cut(objectDimTags, toolDimTags) → removes tool from object
+        result, _ = gmsh.model.occ.cut([(3, outer)], [(3, inner)])
+        if not result:
+            raise RuntimeError(
+                f"Boolean cut returned empty result "
+                f"(major_r={major_r}, minor_r={minor_r}, z={cz})"
+            )
+        return result[0][1]
+
     else:
-        # Radial axis torus — create z-axis torus then rotate
+        # --- axis="radial": fall back to OCC addTorus + rotation ----------
+        # Used by toroid, toroid_poloidal, rodin (where the torus is small
+        # and rotated; the meshing issues are less severe for those shapes).
         tag = gmsh.model.occ.addTorus(cx, cy, cz, major_r, minor_r)
-        # Rotate around the azimuthal tangent direction at this angle
         ax = -math.sin(radial_angle)
         ay = math.cos(radial_angle)
         gmsh.model.occ.rotate(
             [(3, tag)], cx, cy, cz, ax, ay, 0.0, math.pi / 2 + extra_tilt
         )
-
-    return tag
+        return tag
 
 
 def _add_domain_sphere(radius: float) -> int:
@@ -287,60 +362,66 @@ def _add_domain_sphere(radius: float) -> int:
 
 def _tag_physical_groups(wire_tags: list[int]) -> None:
     """
-    Fragment overlapping volumes (boolean fuse for wire, cut from domain),
-    tag physical groups for solver.
+    Fragment overlapping volumes (boolean cut of wire from domain),
+    then assign physical groups with EXPLICIT tags that match the constants
+    in solver/fields/solver.py:
+      coil_wire      = 1   (WIRE_TAG)
+      air_domain     = 2   (AIR_TAG)
+      boundary_sphere = 10  (BOUNDARY_TAG)
+
+    Classification: the domain volume is the one with the largest bounding-box
+    extent (the sphere); all smaller volumes are wire fragments.
     """
     gmsh.model.occ.synchronize()
 
-    # Get all volumes
+    # Identify the domain sphere (last added) and wire tori (all others)
     all_vols = gmsh.model.getEntities(3)
     vol_tags = [v[1] for v in all_vols]
 
-    # The last added volume is the domain sphere
-    domain_tag = vol_tags[-1]
+    domain_tag = vol_tags[-1]   # _add_domain_sphere is always called last
     wire_vol_tags = [t for t in vol_tags if t != domain_tag]
 
     if not wire_vol_tags:
         raise RuntimeError("No wire volumes found after geometry build")
 
-    # Fragment: cuts wire out of domain, keeping both
-    wire_dimtags = [(3, t) for t in wire_vol_tags]
-    domain_dimtag = [(3, domain_tag)]
+    log.debug(f"Fragment: domain={domain_tag}, wires={wire_vol_tags}")
 
-    result, _ = gmsh.model.occ.fragment(domain_dimtag, wire_dimtags)
+    # Fragment: cut wire volumes out of the domain sphere, keeping both
+    wire_dimtags = [(3, t) for t in wire_vol_tags]
+    gmsh.model.occ.fragment([(3, domain_tag)], wire_dimtags)
     gmsh.model.occ.synchronize()
 
-    # Re-query volumes after fragment
+    # Re-query all volumes after the boolean operation
     all_vols_after = gmsh.model.getEntities(3)
     final_vol_tags = [v[1] for v in all_vols_after]
 
-    # The fragment result: first entry is the domain remainder, rest are wire fragments
-    # We use bounding box heuristic: wire vols are small
-    domain_vols = []
-    wire_vols = []
+    # Classify: domain = the largest bounding-box volume (the sphere remainder).
+    # Wire = everything else.  Using > 50 % of the max extent as threshold.
+    extents = {}
     for tag in final_vol_tags:
-        xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(3, tag)
-        vol_extent = max(xmax - xmin, ymax - ymin, zmax - zmin)
-        if vol_extent > 0.9 * 2 * gmsh.model.getBoundingBox(3, final_vol_tags[0])[3]:
-            domain_vols.append(tag)
-        else:
-            wire_vols.append(tag)
+        bb = gmsh.model.getBoundingBox(3, tag)          # (xmin,ymin,zmin,xmax,ymax,zmax)
+        extents[tag] = max(bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2])
 
-    # Fallback: first fragment result is the domain
-    if not domain_vols:
-        domain_vols = [result[0][1]] if result else [final_vol_tags[0]]
-        wire_vols = [t for t in final_vol_tags if t not in domain_vols]
+    max_extent = max(extents.values())
+    domain_vols = [t for t, e in extents.items() if e > 0.5 * max_extent]
+    wire_vols   = [t for t, e in extents.items() if e <= 0.5 * max_extent]
 
-    # Physical groups
+    # Safety fallback: if nothing classified as wire, largest = domain, rest = wire
+    if not wire_vols:
+        domain_tag_new = max(extents, key=extents.get)
+        domain_vols = [domain_tag_new]
+        wire_vols   = [t for t in final_vol_tags if t != domain_tag_new]
+
+    # Assign physical groups with EXPLICIT tags to match solver constants
     if wire_vols:
-        gmsh.model.addPhysicalGroup(3, wire_vols, name="coil_wire")
+        gmsh.model.addPhysicalGroup(3, wire_vols,   tag=1,  name="coil_wire")
     if domain_vols:
-        gmsh.model.addPhysicalGroup(3, domain_vols, name="air_domain")
+        gmsh.model.addPhysicalGroup(3, domain_vols, tag=2,  name="air_domain")
 
     # Outer boundary surfaces
     outer_surfs = _get_outer_boundary_surfaces()
     if outer_surfs:
-        gmsh.model.addPhysicalGroup(2, outer_surfs, name="boundary_sphere")
+        gmsh.model.addPhysicalGroup(2, outer_surfs, tag=10, name="boundary_sphere")
 
 
 def _get_outer_boundary_surfaces() -> list[int]:
@@ -354,20 +435,81 @@ def _get_outer_boundary_surfaces() -> list[int]:
     return outer
 
 
-def _finalize_and_mesh(params: CoilParams) -> Path:
-    """Set mesh options and generate. Returns path to .msh file."""
+def _finalize_and_mesh(
+    params: CoilParams,
+    domain_radius_m: float,
+    mesh_resolution: str = "medium",
+) -> Path:
+    """
+    Set mesh characteristic lengths based on resolution preset and generate.
+    Returns path to .msh file.
+
+    Mesh sizing strategy
+    --------------------
+    Wire region (lc_coil):
+      The wire cross-section needs ≥ 2 elements through its radius for J to be
+      physically meaningful.  We scale lc_coil with the resolution preset.
+      IMPORTANT: lc_min must stay ≥ wire_radius / 2 to prevent Gmsh from
+      generating millions of elements and crashing (the domain-to-wire aspect
+      ratio is already 200:1 for typical parameters).
+
+    Domain region (lc_domain):
+      Scales with the coil radius (not domain radius), which keeps the near-field
+      resolution proportional to the coil geometry regardless of domain size.
+
+    Resolution presets
+    ------------------
+      coarse  — fast preview   (~5 k–30 k tets,  < 5 s solve)
+      medium  — good results   (~30 k–150 k tets, < 60 s solve)
+      fine    — accurate       (~150 k+ tets,     minutes)
+    """
     gmsh.model.occ.synchronize()
 
-    # Characteristic length: scale with coil size
-    lc_coil = params.wire_radius_m * 2.0
-    lc_domain = params.radius_m * 0.5
+    # Wire characteristic length — controls resolution in/around the wire.
+    #
+    # CRITICAL: lc_coil must ensure ≥ 6 elements around the minor circumference of
+    # the wire torus (2π·wire_radius / lc_coil ≥ 6).  With fewer segments the 2D
+    # surface mesher produces degenerate ("equivalent") triangles → "Invalid boundary
+    # mesh (overlapping facets)" → 3D mesh failure.
+    #   coarse → lc_coil = wire_radius × 1.0  →  ~6 elems/minor circle
+    #   medium → lc_coil = wire_radius × 0.5  → ~12 elems/minor circle
+    #   fine   → lc_coil = wire_radius × 0.25 → ~25 elems/minor circle
+    _WIRE_FACTORS  = {"coarse": 1.0, "medium": 0.5, "fine": 0.25}
+    lc_coil = params.wire_radius_m * _WIRE_FACTORS.get(mesh_resolution, 0.5)
 
-    gmsh.option.setNumber("Mesh.CharacteristicLengthMin", lc_coil * 0.5)
+    # Domain characteristic length — controls resolution away from the wire.
+    # Based on coil radius (the natural length scale of the near-field).
+    _DOMAIN_FACTORS = {"coarse": 1.5, "medium": 0.5, "fine": 0.15}
+    lc_domain = params.radius_m * _DOMAIN_FACTORS.get(mesh_resolution, 0.5)
+
+    # lc_min is a hard lower bound.  Set to wire_radius/2 to prevent runaway
+    # refinement in narrow transition zones while still resolving the wire.
+    lc_min = params.wire_radius_m * 0.5
+
+    log.info(
+        f"Meshing ({mesh_resolution}): "
+        f"lc_wire={lc_coil:.4g}m, lc_domain={lc_domain:.4g}m, lc_min={lc_min:.4g}m"
+    )
+
+    gmsh.option.setNumber("Mesh.CharacteristicLengthMin", lc_min)
     gmsh.option.setNumber("Mesh.CharacteristicLengthMax", lc_domain)
-    gmsh.option.setNumber("Mesh.Algorithm3D", 4)  # Frontal-Delaunay
 
+    # 2D: Delaunay (avoids "equivalent triangles" on square-section wire rings).
+    # 3D: Delaunay (stable for fragmented Boolean geometries;
+    #     Frontal-Delaunay silently SEGV'd on sphere+cylinder Boolean geometries).
+    gmsh.option.setNumber("Mesh.Algorithm",   5)   # Delaunay 2D
+    gmsh.option.setNumber("Mesh.Algorithm3D", 1)   # Delaunay 3D
+
+    gmsh.model.mesh.generate(2)
+    gmsh.model.mesh.optimize("Relocate2D")
     gmsh.model.mesh.generate(3)
-    gmsh.model.mesh.optimize("Netgen")
+    gmsh.model.mesh.optimize("Relocate3D")
+
+    # Renumber to guarantee contiguous 1..N node indices.
+    # dolfinx's extract_geometry asserts contiguity; gaps arise after
+    # the Boolean cut + fragment pipeline.
+    gmsh.model.mesh.renumberNodes()
+    gmsh.model.mesh.renumberElements()
 
     tmp = tempfile.mkdtemp(prefix="oracle_mesh_")
     msh_path = Path(tmp) / "coil.msh"

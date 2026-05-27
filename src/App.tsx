@@ -1,32 +1,34 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getSolverStatus, saveHypothesis, solve } from "./lib/api";
 import type { FieldName, SolveRequest, SolveResult, SolverStatus } from "./lib/fieldTypes";
 import { defaultSolveRequest, PRIMARY_FIELD } from "./lib/fieldTypes";
 import { FIELD_CHIP_COLOR } from "./lib/colormap";
 import { GeometryPanel } from "./components/GeometryPanel";
-import { SliceViewer }   from "./components/SliceViewer";
 import { VolumeViewer }  from "./components/VolumeViewer";
 import { HypothesisLog } from "./components/HypothesisLog";
 
-type BottomTab = "slices" | "hypotheses";
-
 export default function App() {
-  const [request,       setRequest]       = useState<SolveRequest>(defaultSolveRequest());
-  const [result,        setResult]        = useState<SolveResult | null>(null);
-  const [isSolving,     setIsSolving]     = useState(false);
-  const [solverStatus,  setSolverStatus]  = useState<SolverStatus>({ state: "starting", message: "Checking…" });
+  const [request,      setRequest]      = useState<SolveRequest>(defaultSolveRequest());
+  const [result,       setResult]       = useState<SolveResult | null>(null);
+  const [isSolving,    setIsSolving]    = useState(false);
+  const [solverStatus, setSolverStatus] = useState<SolverStatus>({ state: "starting", message: "Checking…" });
   const [selectedField, setSelectedField] = useState<FieldName>("phi");
-  const [bottomTab,     setBottomTab]     = useState<BottomTab>("slices");
   const [saveModalOpen, setSaveModalOpen] = useState(false);
-  const [hypRefresh,    setHypRefresh]    = useState(0);
-  const [error,         setError]         = useState<string | null>(null);
+  const [hypRefresh,   setHypRefresh]   = useState(0);
+  const [error,        setError]        = useState<string | null>(null);
+  const [showHistory,  setShowHistory]  = useState(false);
 
-  // Sync selectedField when formulation changes
+  // Ref so handleSolve can check without being in its dep array
+  const isSolvingRef = useRef(false);
+
+  // Sync selected field + volume_field when formulation changes
   useEffect(() => {
-    setSelectedField(PRIMARY_FIELD[request.formulation]);
+    const f = PRIMARY_FIELD[request.formulation];
+    setSelectedField(f);
+    setRequest(r => ({ ...r, volume_field: f }));
   }, [request.formulation]);
 
-  // Poll solver status on mount
+  // Poll solver status until ready
   useEffect(() => {
     let active = true;
     async function poll() {
@@ -44,13 +46,15 @@ export default function App() {
   }, []);
 
   const handleSolve = useCallback(async () => {
+    if (isSolvingRef.current) return;   // skip if a solve is already running
+    isSolvingRef.current = true;
     setIsSolving(true);
     setError(null);
     try {
-      // Ensure slices use the current field
       const req: SolveRequest = {
         ...request,
         slices: request.slices.map(s => ({ ...s, field: selectedField })),
+        volume_field: selectedField,   // drive the 3-D viewer with the active chip
       };
       const r = await solve(req);
       setResult(r);
@@ -58,9 +62,22 @@ export default function App() {
     } catch (e) {
       setError(String(e));
     } finally {
+      isSolvingRef.current = false;
       setIsSolving(false);
     }
   }, [request, selectedField]);
+
+  const solverReady = solverStatus.state === "ready";
+
+  // ── Auto-solve on parameter change (debounced 750 ms) ──────────────────────
+  // handleSolve recreates whenever request or selectedField changes, so this
+  // effect fires naturally on every param edit. The 750 ms timer resets on
+  // each keystroke / slider drag, then fires once the user pauses.
+  useEffect(() => {
+    if (!solverReady) return;
+    const t = setTimeout(handleSolve, 750);
+    return () => clearTimeout(t);
+  }, [handleSolve, solverReady]);
 
   const handleSave = async (name: string, notes: string) => {
     if (!result) return;
@@ -69,27 +86,22 @@ export default function App() {
     setSaveModalOpen(false);
   };
 
-  const solverReady = solverStatus.state === "ready";
-
   return (
     <div className="flex flex-col h-screen bg-app text-slate-200 font-mono overflow-hidden select-none">
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
-      <header className="h-11 flex items-center gap-3 px-4 border-b border-rim shrink-0">
-        <span className="text-accent font-semibold text-sm tracking-wide mr-1">Oracle</span>
-
-        {/* Solver status indicator */}
+      <header className="h-10 flex items-center gap-3 px-4 border-b border-rim shrink-0">
+        <span className="text-accent font-semibold text-sm tracking-wide">Oracle</span>
         <StatusDot state={solverStatus.state} title={solverStatus.message} />
-
-        <div className="w-px h-4 bg-rim mx-1" />
+        <div className="w-px h-4 bg-rim" />
 
         {/* Field selector */}
-        <div className="flex gap-1">
+        <div className="flex gap-0.5">
           {(["phi", "A_magnitude", "B_magnitude", "J_magnitude"] as FieldName[]).map(f => (
             <button
               key={f}
               onClick={() => setSelectedField(f)}
-              className={`text-xs px-2 py-1 rounded transition-colors ${
+              className={`text-xs px-2 py-0.5 rounded transition-colors ${
                 selectedField === f
                   ? FIELD_CHIP_COLOR[f]
                   : "text-slate-600 hover:text-slate-400"
@@ -101,108 +113,98 @@ export default function App() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {result && (() => {
+            const mx = result.maxima.find(m => m.field === selectedField);
+            if (!mx) return null;
+            const v = mx.max_value;
+            const fmtV = (Math.abs(v) >= 1e3 || (Math.abs(v) < 1e-3 && v !== 0))
+              ? v.toExponential(2)
+              : v.toPrecision(3);
+            const units: Record<string, string> = {
+              phi: "V", A_magnitude: "Wb/m", B_magnitude: "T", J_magnitude: "A/m²",
+            };
+            return (
+              <span className={`text-xs tabular-nums px-2 py-0.5 rounded ${FIELD_CHIP_COLOR[selectedField]}`}>
+                max {fmtV} {units[selectedField] ?? ""}
+              </span>
+            );
+          })()}
           {result && (
-            <span className="text-xs text-slate-600">
+            <span className="text-xs text-slate-600 tabular-nums">
               {result.solve_time_s.toFixed(1)}s · {result.mesh_nodes.toLocaleString()} nodes
             </span>
           )}
           {result && (
-            <button
-              onClick={() => setSaveModalOpen(true)}
-              className="btn-ghost text-xs"
-            >
-              Save run
+            <button onClick={() => setSaveModalOpen(true)} className="btn-ghost text-xs">
+              Save
             </button>
           )}
           <button
             onClick={handleSolve}
             disabled={!solverReady || isSolving}
-            className="btn-primary text-sm"
+            className="btn-primary text-xs"
           >
             {isSolving ? "Solving…" : "▶ Solve"}
           </button>
         </div>
       </header>
 
-      {/* ── Error banner ──────────────────────────────────────────────── */}
+      {/* ── Error banner ───────────────────────────────────────────────── */}
       {error && (
-        <div className="bg-red-950/60 border-b border-red-800/40 px-4 py-1.5 text-xs text-red-300 flex items-center gap-2 shrink-0">
+        <div className="bg-red-950/60 border-b border-red-800/40 px-4 py-1 text-xs text-red-300 flex items-center gap-2 shrink-0">
           <span className="flex-1">{error}</span>
           <button onClick={() => setError(null)} className="text-red-500 hover:text-red-300">✕</button>
         </div>
       )}
 
-      {/* ── Main layout ───────────────────────────────────────────────── */}
+      {/* ── Main layout ────────────────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0">
 
-        {/* Sidebar */}
-        <aside className="w-64 shrink-0 border-r border-rim flex flex-col overflow-hidden bg-panel">
-          <div className="flex-1 overflow-y-auto px-4 py-4">
+        {/* ── Controls sidebar ─────────────────────────────────────────── */}
+        <aside className="w-60 shrink-0 border-r border-rim flex flex-col overflow-hidden bg-panel">
+          <div className="flex-1 overflow-y-auto px-3 py-3 min-h-0">
             <GeometryPanel
               request={request}
               onChange={setRequest}
               disabled={isSolving}
             />
           </div>
-        </aside>
 
-        {/* Content column */}
-        <div className="flex-1 flex flex-col min-w-0">
-
-          {/* 3D Volume viewer — primary view */}
-          <div className="flex-1 min-h-0">
-            <VolumeViewer
-              volume={result?.volume ?? null}
-              selectedField={selectedField}
-              isSolving={isSolving}
-            />
-          </div>
-
-          {/* Bottom panel — slices + hypotheses */}
-          <div className="h-64 shrink-0 border-t border-rim flex flex-col bg-panel">
-            {/* Tab bar */}
-            <div className="flex border-b border-rim shrink-0">
-              {(["slices", "hypotheses"] as BottomTab[]).map(t => (
-                <button
-                  key={t}
-                  onClick={() => setBottomTab(t)}
-                  className={`px-4 py-2 text-xs transition-colors border-r border-rim
-                    ${bottomTab === t
-                      ? "text-slate-200 bg-white/4"
-                      : "text-slate-500 hover:text-slate-300"}`}
-                >
-                  {t === "slices" ? "2D Slices" : "Hypotheses"}
-                </button>
-              ))}
-              {/* Maxima summary */}
-              {result && (
-                <div className="ml-auto px-3 flex items-center gap-3 text-xs text-slate-600 overflow-x-auto">
-                  {result.maxima.slice(0, 3).map(m => (
-                    <span key={m.field} className={`shrink-0 ${FIELD_CHIP_COLOR[m.field as FieldName]}`}>
-                      {m.field === "phi" ? "φ" : m.field === "A_magnitude" ? "|A|" : m.field === "B_magnitude" ? "|B|" : "|J|"}
-                      {" "}{m.max_value.toExponential(2)}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Tab content */}
-            <div className="flex-1 min-h-0 overflow-hidden">
-              {bottomTab === "slices" ? (
-                <SliceViewer result={result} selectedField={selectedField} />
-              ) : (
+          {/* Hypothesis history — collapsible at the bottom */}
+          <div className="shrink-0 border-t border-rim">
+            <button
+              onClick={() => setShowHistory(h => !h)}
+              className="w-full px-3 py-2 text-xs flex items-center gap-1.5 text-slate-500 hover:text-slate-300 transition-colors"
+            >
+              <span>{showHistory ? "▾" : "▸"}</span>
+              <span>Hypotheses</span>
+              <span className="ml-auto text-slate-700">{showHistory ? "hide" : "show"}</span>
+            </button>
+            {showHistory && (
+              <div className="h-52 overflow-hidden border-t border-rim">
                 <HypothesisLog
-                  onRestoreParams={r => { setRequest(r); }}
+                  onRestoreParams={r => { setRequest(r); setShowHistory(false); }}
                   refreshTrigger={hypRefresh}
                 />
-              )}
-            </div>
+              </div>
+            )}
           </div>
+        </aside>
+
+        {/* ── 3-D viewer — fills everything right of the sidebar ───────── */}
+        <div className="flex-1 min-w-0 relative">
+          <VolumeViewer
+            volume={result?.volume ?? null}
+            selectedField={selectedField}
+            isSolving={isSolving}
+            maxima={result?.maxima ?? []}
+            coilParams={request.coil}
+            domainRadius={request.domain_radius_m}
+          />
         </div>
       </div>
 
-      {/* ── Save modal ────────────────────────────────────────────────── */}
+      {/* ── Save modal ─────────────────────────────────────────────────── */}
       {saveModalOpen && (
         <SaveModal
           onSave={handleSave}
@@ -214,13 +216,14 @@ export default function App() {
 }
 
 // ---------------------------------------------------------------------------
-// Small UI components
+// Small UI helpers
 // ---------------------------------------------------------------------------
 
 function StatusDot({ state, title }: { state: string; title: string }) {
-  const color = state === "ready" ? "bg-green-400"
-              : state === "error" ? "bg-red-400"
-              : "bg-amber-400 animate-pulse";
+  const color =
+    state === "ready"   ? "bg-green-400" :
+    state === "error"   ? "bg-red-400"   :
+                          "bg-amber-400 animate-pulse";
   return (
     <span title={title} className="flex items-center gap-1.5 text-xs text-slate-500">
       <span className={`w-1.5 h-1.5 rounded-full ${color}`} />
@@ -232,7 +235,7 @@ function StatusDot({ state, title }: { state: string; title: string }) {
 function SaveModal({
   onSave, onCancel,
 }: {
-  onSave: (name: string, notes: string) => void;
+  onSave:   (name: string, notes: string) => void;
   onCancel: () => void;
 }) {
   const [name,  setName]  = useState("");
