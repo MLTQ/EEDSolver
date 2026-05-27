@@ -100,7 +100,7 @@ impl OracleSolver {
         }
 
         // Allocate GPU field buffers.
-        let gstate = GpuGridState::new(&self.ctx, &grid);
+        let mut gstate = GpuGridState::new(&self.ctx, &grid);
 
         // Dispatch Biot-Savart → fills a_vec.
         gstate.run_biot_savart(&self.ctx, &grid, &segments)?;
@@ -108,10 +108,22 @@ impl OracleSolver {
         // Dispatch field derivation → fills b_vec and c_fld.
         gstate.run_derive_fields(&self.ctx, &grid)?;
 
-        // ── Phase 2: Static EED ──────────────────────────────────────────────
-        if request.eed.gamma > 0.0 {
-            warnings.push(
-                "Phase 2 (static EED CG solver) not yet implemented — φ is zero.".into()
+        // ── Phase 2: Static EED φ solver ─────────────────────────────────────
+        // For closed-loop coils (solenoid, toroid, etc.) ∇·J = 0 everywhere,
+        // so the rhs is zero and φ = 0 is the exact static EED solution.
+        // This solver is here for correctness and future open-circuit / charge sources.
+        let alpha_sq = (request.eed.alpha * request.eed.alpha) as f32;
+        if alpha_sq > 0.0 {
+            // rhs = −∇·J; zero for all current coil types (closed loops).
+            let rhs = vec![0.0f32; gstate.scalar_len()];
+            // 64 Jacobi sweeps converge well for typical grid sizes.
+            // TODO: replace with CG for faster convergence on large grids.
+            let n_jacobi = (64u32).min(grid.n * 2);
+            gstate.run_jacobi_phi(&self.ctx, &grid, &rhs, alpha_sq, n_jacobi)?;
+            log::info!(
+                "Static EED φ: α={:.3} m⁻¹  λ={:.3} m  ({n_jacobi} Jacobi iters)",
+                request.eed.alpha,
+                1.0 / request.eed.alpha,
             );
         }
 
@@ -140,7 +152,10 @@ impl OracleSolver {
         let volume = if request.request_volume {
             // Guard: if the requested field isn't populated yet, fall back to B.
             let field = match &request.volume_field {
-                f @ (FieldName::BMagnitude | FieldName::AMagnitude | FieldName::CField) => f.clone(),
+                f @ (FieldName::BMagnitude
+                   | FieldName::AMagnitude
+                   | FieldName::CField
+                   | FieldName::Phi) => f.clone(),
                 _ => {
                     warnings.push(format!(
                         "Volume field {:?} not yet implemented — falling back to B_magnitude.",

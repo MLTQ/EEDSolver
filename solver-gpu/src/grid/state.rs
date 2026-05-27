@@ -12,7 +12,7 @@ use crate::{biot::WireSegment, context::GpuContext, error::SolverError};
 use super::YeeGrid;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GPU uniform struct — must match GridParams in both WGSL shaders
+// GPU uniform structs
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
@@ -36,6 +36,17 @@ impl GridParamsGpu {
             _pad:     [0; 2],
         }
     }
+}
+
+/// Uniform params for the Jacobi elliptic solver.
+/// Must match `JacobiParams` in `jacobi.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct JacobiParamsGpu {
+    pub dx:   f32,   // cell spacing [m]
+    pub m2:   f32,   // m² = α² (Yukawa mass squared) [1/m²]
+    pub n1:   u32,   // vertices per axis
+    pub _pad: u32,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -307,4 +318,121 @@ impl GpuGridState {
 
     /// Total number of f32 values in the vector field buffers (n1³ × 4).
     pub fn vec_len(&self) -> usize { self.scalar_len() * 4 }
+
+    // ── Phase 2: Static EED — Jacobi elliptic solver ─────────────────────────
+
+    /// Solve ∇²φ − α²φ = rhs_data using `n_iter` Jacobi sweeps.
+    ///
+    /// Stores the final solution in `self.phi`.
+    ///
+    /// Source convention:
+    ///   EED φ equation: rhs = −∇·J  (zero for closed-loop coils; non-zero at
+    ///                                  open-circuit endpoints or charge densities).
+    ///   Lorenz gauge enforcer: rhs = −∇·A / dt  (Phase 3).
+    ///
+    /// `alpha_sq` = α² [1/m²].  Pass 0.0 for standard (massless) Maxwell.
+    pub fn run_jacobi_phi(
+        &mut self,
+        ctx:       &GpuContext,
+        grid:      &YeeGrid,
+        rhs_data:  &[f32],
+        alpha_sq:  f32,
+        n_iter:    u32,
+    ) -> Result<(), SolverError> {
+        if n_iter == 0 { return Ok(()); }
+
+        let dev   = ctx.device();
+        let n1    = self.n1;
+        let total = self.scalar_len() as u64;
+        let bytes = total * 4;
+
+        // Allocate the ping-pong scratch buffer (phi itself is "pong").
+        // We start from phi = 0 (already zeroed at allocation).
+        let storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
+        let ping = dev.create_buffer(&wgpu::BufferDescriptor {
+            label:              Some("phi_ping"),
+            size:               bytes,
+            usage:              storage,
+            mapped_at_creation: false,
+        });
+
+        // Upload RHS
+        let rhs_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:    Some("jacobi_rhs"),
+            contents: bytemuck::cast_slice(rhs_data),
+            usage:    wgpu::BufferUsages::STORAGE,
+        });
+
+        let params     = JacobiParamsGpu { dx: grid.dx as f32, m2: alpha_sq, n1, _pad: 0 };
+        let params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:    Some("jacobi_params"),
+            contents: bytes_of(&params),
+            usage:    wgpu::BufferUsages::UNIFORM,
+        });
+
+        let shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label:  Some("jacobi"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/jacobi.wgsl").into()),
+        });
+
+        let pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label:               Some("jacobi_step"),
+            layout:              None,
+            module:              &shader,
+            entry_point:         "jacobi_step",
+            compilation_options: Default::default(),
+            cache:               None,
+        });
+
+        let wg_count = (n1 * n1 * n1).div_ceil(256);
+
+        // Helper: build bind group for one Jacobi step (u_in → u_out).
+        let make_bg = |u_in: &wgpu::Buffer, u_out: &wgpu::Buffer| {
+            dev.create_bind_group(&wgpu::BindGroupDescriptor {
+                label:   Some("jacobi_bg"),
+                layout:  &pipeline.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: u_in.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: u_out.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: rhs_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: params_buf.as_entire_binding() },
+                ],
+            })
+        };
+
+        // Encode all iterations into one command buffer — avoids repeated
+        // CPU round-trips and is much faster on Metal/Vulkan.
+        let mut enc = dev.create_command_encoder(&Default::default());
+        let mut from_ping = true; // phi starts as zero in self.phi; first ping reads phi
+
+        for _ in 0..n_iter {
+            let (u_in, u_out): (&wgpu::Buffer, &wgpu::Buffer) = if from_ping {
+                (&ping, &self.phi)     // ping → phi
+            } else {
+                (&self.phi, &ping)     // phi → ping
+            };
+
+            let bg = make_bg(u_in, u_out);
+            {
+                let mut pass = enc.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &bg, &[]);
+                pass.dispatch_workgroups(wg_count, 1, 1);
+            }
+            from_ping = !from_ping;
+        }
+
+        // If we ended with an even number of iterations, the result is in phi.
+        // If odd, result is in ping — copy it to phi.
+        if !from_ping {
+            // Last write was to ping, so copy ping → phi.
+            enc.copy_buffer_to_buffer(&ping, 0, &self.phi, 0, bytes);
+        }
+
+        ctx.queue().submit([enc.finish()]);
+        dev.poll(wgpu::MaintainBase::Wait);
+
+        log::info!("Jacobi φ: {n_iter} iterations, α²={alpha_sq:.3e}, n1={n1}");
+        Ok(())
+    }
 }

@@ -36,8 +36,8 @@ pub fn extract_slices(
     requests.iter().map(|req| extract_slice(ctx, gstate, grid, req)).collect()
 }
 
-/// Compute field maxima for the fields we have populated.
-/// Phase 1: B magnitude and C field.
+/// Compute field maxima for all populated fields.
+/// Phase 1/2: |B|, |A|, C, φ.
 pub fn compute_maxima(
     ctx:    &GpuContext,
     gstate: &GpuGridState,
@@ -47,19 +47,28 @@ pub fn compute_maxima(
     let dx = grid.dx as f32;
     let r  = grid.extent as f32;
 
-    // Readback B and C
-    let b_data = gstate.readback(ctx, &gstate.b_vec, gstate.vec_len())?;
-    let c_data = gstate.readback(ctx, &gstate.c_fld, gstate.scalar_len())?;
+    let b_data   = gstate.readback(ctx, &gstate.b_vec, gstate.vec_len())?;
+    let a_data   = gstate.readback(ctx, &gstate.a_vec, gstate.vec_len())?;
+    let c_data   = gstate.readback(ctx, &gstate.c_fld, gstate.scalar_len())?;
+    let phi_data = gstate.readback(ctx, &gstate.phi,   gstate.scalar_len())?;
 
     let mut maxima = Vec::new();
 
-    // |B| maximum
-    let (b_max, b_idx) = b_data
-        .chunks_exact(4)
-        .enumerate()
-        .map(|(i, c)| (((c[0]*c[0] + c[1]*c[1] + c[2]*c[2]).sqrt()), i))
-        .fold((0.0_f32, 0usize), |(m, mi), (v, i)| if v > m { (v, i) } else { (m, mi) });
+    // Helper: max of |scalar|
+    let scalar_max = |data: &[f32]| -> (f32, usize) {
+        data.iter().copied().enumerate()
+            .map(|(i, v)| (v.abs(), i))
+            .fold((0.0_f32, 0usize), |(m, mi), (v, i)| if v > m { (v, i) } else { (m, mi) })
+    };
 
+    // Helper: max of vec3 magnitude (stride-4 buffer)
+    let vec_max = |data: &[f32]| -> (f32, usize) {
+        data.chunks_exact(4).enumerate()
+            .map(|(i, c)| ((c[0]*c[0]+c[1]*c[1]+c[2]*c[2]).sqrt(), i))
+            .fold((0.0_f32, 0usize), |(m, mi), (v, i)| if v > m { (v, i) } else { (m, mi) })
+    };
+
+    let (b_max, b_idx) = vec_max(&b_data);
     if b_max > 0.0 {
         maxima.push(FieldMaximum {
             field:        FieldName::BMagnitude,
@@ -68,19 +77,30 @@ pub fn compute_maxima(
         });
     }
 
-    // |C| maximum
-    let (c_max, c_idx) = c_data
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(i, v)| (v.abs(), i))
-        .fold((0.0_f32, 0usize), |(m, mi), (v, i)| if v > m { (v, i) } else { (m, mi) });
+    let (a_max, a_idx) = vec_max(&a_data);
+    if a_max > 0.0 {
+        maxima.push(FieldMaximum {
+            field:        FieldName::AMagnitude,
+            max_value:    a_max as f64,
+            max_location: index_to_world(a_idx, n1, dx, r),
+        });
+    }
 
+    let (c_max, c_idx) = scalar_max(&c_data);
     if c_max > 0.0 {
         maxima.push(FieldMaximum {
             field:        FieldName::CField,
             max_value:    c_max as f64,
             max_location: index_to_world(c_idx, n1, dx, r),
+        });
+    }
+
+    let (phi_max, phi_idx) = scalar_max(&phi_data);
+    if phi_max > 0.0 {
+        maxima.push(FieldMaximum {
+            field:        FieldName::Phi,
+            max_value:    phi_max as f64,
+            max_location: index_to_world(phi_idx, n1, dx, r),
         });
     }
 
@@ -113,6 +133,9 @@ pub fn extract_volume(
         }
         FieldName::CField => {
             gstate.readback(ctx, &gstate.c_fld, total)?
+        }
+        FieldName::Phi => {
+            gstate.readback(ctx, &gstate.phi, total)?
         }
         _ => vec![0.0f32; total],
     };
@@ -185,7 +208,11 @@ fn extract_slice(
             let c = gstate.readback(ctx, &gstate.c_fld, gstate.scalar_len())?;
             slice_scalar(&c, n1, req.axis, layer)
         }
-        // Phase 2+ fields — return zeros with a note.
+        FieldName::Phi => {
+            let phi = gstate.readback(ctx, &gstate.phi, gstate.scalar_len())?;
+            slice_scalar(&phi, n1, req.axis, layer)
+        }
+        // Phase 3+ fields — return zeros.
         _ => vec![0.0f32; (n1 * n1) as usize],
     };
 
