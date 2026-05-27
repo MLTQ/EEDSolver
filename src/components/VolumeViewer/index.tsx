@@ -10,15 +10,16 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import type { CoilParams, CoilType, FieldMaximum, FieldName, VolumeData } from "../../lib/fieldTypes";
-import { FIELD_CHIP_COLOR } from "../../lib/colormap";
+import type { CoilEntity, CoilParams, CoilType, FieldMaximum, FieldName, VolumeData } from "../../lib/fieldTypes";
+import { FIELD_CHIP, FIELD_UNITS } from "../../lib/fieldTypes";
+import { FIELD_CHIP_COLOR, DEFAULT_CHIP_COLOR } from "../../lib/colormap";
 
 interface Props {
   volume:        VolumeData | null;
   selectedField: FieldName;
   isSolving:     boolean;
   maxima:        FieldMaximum[];
-  coilParams:    CoilParams;
+  entity:        CoilEntity;
   domainRadius:  number;          // meters
 }
 
@@ -300,13 +301,14 @@ function buildCoilGroup(
 // Component
 // ---------------------------------------------------------------------------
 
-export function VolumeViewer({ volume, selectedField, isSolving, maxima, coilParams, domainRadius }: Props) {
+export function VolumeViewer({ volume, selectedField, isSolving, maxima, entity, domainRadius }: Props) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const sceneRef  = useRef<SceneState | null>(null);
   const [threshold, setThreshold] = useState(0.02);
   const [opacity,   setOpacity]   = useState(1.8);
 
-  const colormap = selectedField === "phi" ? 0 : 1;
+  // 0 = viridis, 1 = plasma — plasma for vector magnitudes, viridis otherwise
+  const colormap = ["A_magnitude", "B_magnitude", "poynting_mag"].includes(selectedField) ? 1 : 0;
 
   // Setup scene once on mount
   useEffect(() => {
@@ -335,7 +337,7 @@ export function VolumeViewer({ volume, selectedField, isSolving, maxima, coilPar
     }
   }, [volume]);
 
-  // Update coil geometry when coil params or volume bounds change
+  // Update coil geometry when entity or volume bounds change
   useEffect(() => {
     const state = sceneRef.current;
     if (!state) return;
@@ -347,8 +349,8 @@ export function VolumeViewer({ volume, selectedField, isSolving, maxima, coilPar
           volume.z_range[1] - volume.z_range[0],
         )
       : 2 * domainRadius;
-    updateCoil(state, coilParams, maxS);
-  }, [coilParams, domainRadius, volume]);
+    updateCoil(state, entity.coil, maxS);
+  }, [entity, domainRadius, volume]);
 
   // Push uniform changes each frame
   useEffect(() => {
@@ -359,12 +361,7 @@ export function VolumeViewer({ volume, selectedField, isSolving, maxima, coilPar
     state.material.uniforms.uColormap.value  = colormap;
   }, [threshold, opacity, colormap]);
 
-  const fieldLabel = (f: string) =>
-    ({ phi: "φ", A_magnitude: "|A|", B_magnitude: "|B|", J_magnitude: "|J|" }[f] ?? f);
-
-  const FIELD_UNITS: Record<string, string> = {
-    phi: "V", A_magnitude: "Wb/m", B_magnitude: "T", J_magnitude: "A/m²",
-  };
+  const fieldLabel = (f: string) => FIELD_CHIP[f as FieldName] ?? f;
 
   /** Format a raw SI value to human-readable with metric prefix (μ, m, k…) */
   const fmtSI = (v: number, unit: string): string => {
@@ -424,7 +421,7 @@ export function VolumeViewer({ volume, selectedField, isSolving, maxima, coilPar
           {maxima.map(m => (
             <span
               key={m.field}
-              className={`text-xs tabular-nums px-2 py-0.5 rounded ${FIELD_CHIP_COLOR[m.field as FieldName]}`}
+              className={`text-xs tabular-nums px-2 py-0.5 rounded ${FIELD_CHIP_COLOR[m.field as FieldName] ?? DEFAULT_CHIP_COLOR}`}
             >
               {fieldLabel(m.field)} {fmtSI(m.max_value, FIELD_UNITS[m.field] ?? "")}
             </span>

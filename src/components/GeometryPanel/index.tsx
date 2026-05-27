@@ -1,105 +1,159 @@
 import React from "react";
-import type { CoilParams, EedParams, FormulationType, MeshResolution, SolveRequest } from "../../lib/fieldTypes";
+import type {
+  CoilEntity, CoilParams, CoilType,
+  EedParams, GemParams, SolveRequest, SolverConfig,
+} from "../../lib/fieldTypes";
 import { COIL_LABELS } from "../../lib/fieldTypes";
 
 interface Props {
-  request: SolveRequest;
+  request:  SolveRequest;
   onChange: (r: SolveRequest) => void;
   disabled: boolean;
 }
 
 export function GeometryPanel({ request, onChange, disabled }: Props) {
-  const set = (patch: Partial<SolveRequest>) => onChange({ ...request, ...patch });
-  const setCoil = (patch: Partial<CoilParams>) => set({ coil: { ...request.coil, ...patch } });
-  const setEed  = (patch: Partial<EedParams>)  => set({ eed:  { ...request.eed,  ...patch } });
+  // All edits go through typed helpers so nothing gets lost.
+  const set      = (patch: Partial<SolveRequest>) => onChange({ ...request, ...patch });
+  const setSolver = (patch: Partial<SolverConfig>) =>
+    set({ solver: { ...request.solver, ...patch } });
+  const setEed   = (patch: Partial<EedParams>) =>
+    set({ eed: { ...request.eed, ...patch } });
+  const setGem   = (patch: Partial<GemParams>) =>
+    set({ gem: { ...request.gem, ...patch } });
 
-  const showAlpha = request.formulation !== "maxwell_only";
-  const showBeta  = request.formulation === "eed_coupled";
+  // Single-entity shortcut (multi-entity UI comes in Phase 5).
+  const entity    = request.entities[0];
+  const setEntity = (patch: Partial<CoilEntity>) =>
+    set({ entities: [{ ...entity, ...patch }, ...request.entities.slice(1)] });
+  const setCoil   = (patch: Partial<CoilParams>) =>
+    setEntity({ coil: { ...entity.coil, ...patch } });
 
   return (
     <div className={`flex flex-col gap-5 ${disabled ? "opacity-60 pointer-events-none" : ""}`}>
 
-      {/* Coil type */}
+      {/* ── Coil type ─────────────────────────────────────────────────── */}
       <Section label="Coil type">
         <select
           className="select-dark w-full"
-          value={request.coil.coil_type}
-          onChange={e => setCoil({ coil_type: e.target.value as CoilParams["coil_type"] })}
+          value={entity.coil.coil_type}
+          onChange={e => setCoil({ coil_type: e.target.value as CoilType })}
         >
-          {(Object.keys(COIL_LABELS) as Array<keyof typeof COIL_LABELS>).map(k => (
+          {(Object.keys(COIL_LABELS) as CoilType[]).map(k => (
             <option key={k} value={k}>{COIL_LABELS[k]}</option>
           ))}
         </select>
       </Section>
 
-      {/* Geometry */}
+      {/* ── Geometry ──────────────────────────────────────────────────── */}
       <Section label="Geometry">
-        <Slider label="Radius" unit="m"  value={request.coil.radius_m}      min={0.005} max={0.5}   step={0.005} onChange={v => setCoil({ radius_m: v })} />
-        <Slider label="Turns"  unit=""   value={request.coil.turns}          min={1}     max={100}   step={1}     onChange={v => setCoil({ turns: Math.round(v) })} />
-        <Slider label="Pitch"  unit="m"  value={request.coil.pitch_m}        min={0.001} max={0.05}  step={0.001} onChange={v => setCoil({ pitch_m: v })} />
-        <Slider label="Wire r" unit="m"  value={request.coil.wire_radius_m}  min={0.0002} max={0.005} step={0.0002} onChange={v => setCoil({ wire_radius_m: v })} fmt={v => v.toFixed(4)} />
-        <Slider label="Current" unit="A" value={request.coil.current_A}      min={0.1}   max={100}   step={0.1}   onChange={v => setCoil({ current_A: v })} />
+        <Slider label="Radius"   unit="m"  value={entity.coil.radius_m}     min={0.005} max={0.5}   step={0.005} onChange={v => setCoil({ radius_m: v })} />
+        <Slider label="Turns"    unit=""   value={entity.coil.turns}         min={1}     max={100}   step={1}     onChange={v => setCoil({ turns: Math.round(v) })} />
+        <Slider label="Pitch"    unit="m"  value={entity.coil.pitch_m}       min={0.001} max={0.05}  step={0.001} onChange={v => setCoil({ pitch_m: v })} />
+        <Slider label="Wire r"   unit="m"  value={entity.coil.wire_radius_m} min={0.0002} max={0.005} step={0.0002} onChange={v => setCoil({ wire_radius_m: v })} fmt={v => v.toFixed(4)} />
+        <Slider label="Current"  unit="A"  value={entity.coil.current_A}     min={0.1}   max={1000}  step={0.5}   onChange={v => setCoil({ current_A: v })} />
       </Section>
 
-      {/* Domain */}
+      {/* ── Superconducting toggle (for Li-Torr GEM) ──────────────────── */}
+      <Toggle
+        label="Superconducting"
+        hint="Enables Li-Torr gravitomagnetic coupling"
+        checked={entity.superconducting}
+        onChange={v => setEntity({ superconducting: v })}
+      />
+
+      {/* ── Domain & solver ───────────────────────────────────────────── */}
       <Section label="Domain">
-        <Slider label="Radius" unit="m" value={request.domain_radius_m} min={0.05} max={2.0} step={0.05} onChange={v => set({ domain_radius_m: v })} />
+        <Slider label="Radius"     unit="m"  value={request.solver.domain_radius_m} min={0.05} max={2.0} step={0.05} onChange={v => setSolver({ domain_radius_m: v })} />
+        <Slider
+          label="Grid"  unit="³"
+          value={request.solver.cells_per_axis}
+          min={16} max={256} step={16}
+          onChange={v => setSolver({ cells_per_axis: Math.round(v) })}
+          fmt={v => `${Math.round(v)}`}
+        />
+        <Toggle
+          label="Lorenz gauge"
+          hint="Force C=0 — Maxwell baseline comparison"
+          checked={request.solver.lorenz_gauge}
+          onChange={v => setSolver({ lorenz_gauge: v })}
+        />
       </Section>
 
-      {/* EED parameters */}
-      {showAlpha && (
-        <Section label="EED parameters">
-          <Slider label="α" unit="1/m" value={request.eed.alpha} min={0} max={50} step={0.5} onChange={v => setEed({ alpha: v })} />
-          {showBeta && <>
-            <Slider label="β" unit="" value={request.eed.beta} min={-5} max={5} step={0.01} onChange={v => setEed({ beta: v })} />
-            <Slider label="γ" unit="" value={request.eed.gamma} min={-5} max={5} step={0.01} onChange={v => setEed({ gamma: v })} />
-          </>}
-        </Section>
-      )}
+      {/* ── EED parameters ────────────────────────────────────────────── */}
+      <Section label="EED coupling">
+        <Slider label="α" unit="1/m" value={request.eed.alpha} min={0}   max={50} step={0.5}  onChange={v => setEed({ alpha: v })} />
+        <Slider label="β" unit=""    value={request.eed.beta}  min={-2}  max={2}  step={0.01} onChange={v => setEed({ beta: v })}  />
+        <Slider label="γ" unit=""    value={request.eed.gamma} min={0}   max={2}  step={0.01} onChange={v => setEed({ gamma: v })}
+          hint="1 = full EED · 0 = standard Maxwell"
+        />
+      </Section>
 
-      {/* Solver settings */}
-      <Section label="Solver">
-        <div className="flex flex-col gap-2">
-          <div className="flex gap-2">
-            {(["coarse", "medium", "fine"] as MeshResolution[]).map(m => (
-              <button
-                key={m}
-                onClick={() => set({ mesh_resolution: m })}
-                className={`flex-1 py-1 rounded text-xs border transition-colors
-                  ${request.mesh_resolution === m
-                    ? "bg-accent/20 border-accent/50 text-accent"
-                    : "border-rim text-slate-400 hover:border-white/20"}`}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
-          <div className="flex flex-col gap-1 mt-1">
-            {(["scalar_only", "maxwell_only", "eed_coupled"] as FormulationType[]).map(f => (
-              <label key={f} className="flex items-center gap-2 cursor-pointer group">
-                <input
-                  type="radio"
-                  name="formulation"
-                  value={f}
-                  checked={request.formulation === f}
-                  onChange={() => set({ formulation: f })}
-                  className="accent-accent"
-                />
-                <span className={`text-xs ${request.formulation === f ? "text-slate-200" : "text-slate-500 group-hover:text-slate-400"}`}>
-                  {f === "scalar_only" ? "scalar only (φ)" : f === "maxwell_only" ? "maxwell (A,B)" : "EED coupled (φ,A)"}
+      {/* ── GEM gravitational sector ──────────────────────────────────── */}
+      <Section label="GEM sector">
+        <Toggle
+          label="Enable GEM"
+          hint="Gravitoelectromagnetic coupling via C field"
+          checked={request.gem.enabled}
+          onChange={v => setGem({ enabled: v })}
+        />
+        {request.gem.enabled && (
+          <>
+            <div className="flex flex-col gap-0.5">
+              <div className="flex justify-between items-baseline">
+                <span className="text-xs text-slate-400">κ<sub>g</sub></span>
+                <span className="text-xs text-slate-200 tabular-nums">
+                  {request.gem.kappa_g.toExponential(2)}
                 </span>
-              </label>
-            ))}
-          </div>
-        </div>
+              </div>
+              <div className="text-xs text-slate-600 mb-1">
+                KK: 7.4×10⁻²⁸ · Li-Torr: 1.14×10⁻¹¹
+              </div>
+              <div className="flex gap-1">
+                {KAPPA_PRESETS.map(([label, val]) => (
+                  <button
+                    key={label}
+                    onClick={() => setGem({ kappa_g: val })}
+                    className={`flex-1 py-0.5 rounded text-xs border transition-colors
+                      ${request.gem.kappa_g === val
+                        ? "bg-emerald-900/40 border-emerald-600/50 text-emerald-300"
+                        : "border-rim text-slate-400 hover:border-white/20"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="number"
+                value={request.gem.kappa_g}
+                step={1e-12}
+                onChange={e => setGem({ kappa_g: parseFloat(e.target.value) || 0 })}
+                className="bg-card border border-rim rounded px-2 py-1 text-xs mt-1
+                           focus:outline-none focus:border-accent/50 tabular-nums"
+                placeholder="κ_g value…"
+              />
+            </div>
+            <Toggle
+              label="Li-Torr mode"
+              hint="Rotating superconductors source B_g = -(2mₑ/e)ω"
+              checked={request.gem.li_torr_mode}
+              onChange={v => setGem({ li_torr_mode: v })}
+            />
+          </>
+        )}
       </Section>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
+// ── κ_g presets ───────────────────────────────────────────────────────────────
+
+const KAPPA_PRESETS: [string, number][] = [
+  ["KK",   7.4e-28],
+  ["L-T",  1.14e-11],
+  ["off",  0.0],
+];
+
+// ── Sub-components ────────────────────────────────────────────────────────────
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -111,17 +165,18 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 }
 
 interface SliderProps {
-  label: string;
-  unit:  string;
-  value: number;
-  min:   number;
-  max:   number;
-  step:  number;
+  label:    string;
+  unit:     string;
+  value:    number;
+  min:      number;
+  max:      number;
+  step:     number;
+  hint?:    string;
   onChange: (v: number) => void;
-  fmt?: (v: number) => string;
+  fmt?:     (v: number) => string;
 }
 
-function Slider({ label, unit, value, min, max, step, onChange, fmt }: SliderProps) {
+function Slider({ label, unit, value, min, max, step, hint, onChange, fmt }: SliderProps) {
   const display = fmt ? fmt(value) : value % 1 === 0 ? String(value) : value.toFixed(3);
   return (
     <div className="flex flex-col gap-0.5">
@@ -131,11 +186,43 @@ function Slider({ label, unit, value, min, max, step, onChange, fmt }: SliderPro
           {display}{unit && <span className="text-slate-500 ml-0.5">{unit}</span>}
         </span>
       </div>
+      {hint && <div className="text-xs text-slate-600">{hint}</div>}
       <input
         type="range" min={min} max={max} step={step} value={value}
         onChange={e => onChange(parseFloat(e.target.value))}
         className="w-full h-1 accent-accent cursor-pointer"
       />
     </div>
+  );
+}
+
+function Toggle({
+  label, hint, checked, onChange,
+}: {
+  label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-2 cursor-pointer group">
+      <div className="relative mt-0.5 shrink-0">
+        <input
+          type="checkbox"
+          className="sr-only peer"
+          checked={checked}
+          onChange={e => onChange(e.target.checked)}
+        />
+        <div className={`w-7 h-4 rounded-full border transition-colors
+          ${checked ? "bg-accent/40 border-accent/60" : "bg-white/5 border-rim"}`}
+        />
+        <div className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-slate-300 transition-transform
+          ${checked ? "translate-x-3" : ""}`}
+        />
+      </div>
+      <div>
+        <div className={`text-xs ${checked ? "text-slate-200" : "text-slate-500 group-hover:text-slate-400"}`}>
+          {label}
+        </div>
+        {hint && <div className="text-xs text-slate-600">{hint}</div>}
+      </div>
+    </label>
   );
 }

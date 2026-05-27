@@ -1,32 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getSolverStatus, saveHypothesis, solve } from "./lib/api";
 import type { FieldName, SolveRequest, SolveResult, SolverStatus } from "./lib/fieldTypes";
-import { defaultSolveRequest, PRIMARY_FIELD } from "./lib/fieldTypes";
-import { FIELD_CHIP_COLOR } from "./lib/colormap";
+import { defaultSolveRequest, FIELD_CHIP, FIELD_UNITS, PHASE1_FIELDS } from "./lib/fieldTypes";
+import { FIELD_CHIP_COLOR, DEFAULT_CHIP_COLOR } from "./lib/colormap";
 import { GeometryPanel } from "./components/GeometryPanel";
+import { SliceViewer }   from "./components/SliceViewer";
 import { VolumeViewer }  from "./components/VolumeViewer";
 import { HypothesisLog } from "./components/HypothesisLog";
 
+const DEFAULT_FIELD: FieldName = "B_magnitude";
+
 export default function App() {
-  const [request,      setRequest]      = useState<SolveRequest>(defaultSolveRequest());
-  const [result,       setResult]       = useState<SolveResult | null>(null);
-  const [isSolving,    setIsSolving]    = useState(false);
-  const [solverStatus, setSolverStatus] = useState<SolverStatus>({ state: "starting", message: "Checking…" });
-  const [selectedField, setSelectedField] = useState<FieldName>("phi");
+  const [request,       setRequest]       = useState<SolveRequest>(defaultSolveRequest());
+  const [result,        setResult]        = useState<SolveResult | null>(null);
+  const [isSolving,     setIsSolving]     = useState(false);
+  const [solverStatus,  setSolverStatus]  = useState<SolverStatus>({
+    state: "initialising", message: "Checking…", gpu_name: null,
+  });
+  const [selectedField, setSelectedField] = useState<FieldName>(DEFAULT_FIELD);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
-  const [hypRefresh,   setHypRefresh]   = useState(0);
-  const [error,        setError]        = useState<string | null>(null);
-  const [showHistory,  setShowHistory]  = useState(false);
+  const [hypRefresh,    setHypRefresh]    = useState(0);
+  const [error,         setError]         = useState<string | null>(null);
+  const [showHistory,   setShowHistory]   = useState(false);
 
-  // Ref so handleSolve can check without being in its dep array
   const isSolvingRef = useRef(false);
-
-  // Sync selected field + volume_field when formulation changes
-  useEffect(() => {
-    const f = PRIMARY_FIELD[request.formulation];
-    setSelectedField(f);
-    setRequest(r => ({ ...r, volume_field: f }));
-  }, [request.formulation]);
 
   // Poll solver status until ready
   useEffect(() => {
@@ -46,15 +43,16 @@ export default function App() {
   }, []);
 
   const handleSolve = useCallback(async () => {
-    if (isSolvingRef.current) return;   // skip if a solve is already running
+    if (isSolvingRef.current) return;
     isSolvingRef.current = true;
     setIsSolving(true);
     setError(null);
     try {
+      // Drive all slice requests with the currently selected field.
       const req: SolveRequest = {
         ...request,
-        slices: request.slices.map(s => ({ ...s, field: selectedField })),
-        volume_field: selectedField,   // drive the 3-D viewer with the active chip
+        slices:       request.slices.map(s => ({ ...s, field: selectedField })),
+        volume_field: selectedField,
       };
       const r = await solve(req);
       setResult(r);
@@ -69,10 +67,7 @@ export default function App() {
 
   const solverReady = solverStatus.state === "ready";
 
-  // ── Auto-solve on parameter change (debounced 750 ms) ──────────────────────
-  // handleSolve recreates whenever request or selectedField changes, so this
-  // effect fires naturally on every param edit. The 750 ms timer resets on
-  // each keystroke / slider drag, then fires once the user pauses.
+  // Auto-solve 750 ms after any parameter change (while solver is ready).
   useEffect(() => {
     if (!solverReady) return;
     const t = setTimeout(handleSolve, 750);
@@ -81,59 +76,64 @@ export default function App() {
 
   const handleSave = async (name: string, notes: string) => {
     if (!result) return;
-    await saveHypothesis(name, request, result, notes || undefined).catch(e => setError(String(e)));
+    await saveHypothesis(name, request, result, notes || undefined)
+      .catch(e => setError(String(e)));
     setHypRefresh(n => n + 1);
     setSaveModalOpen(false);
   };
 
+  // ── Layout ─────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-screen bg-app text-slate-200 font-mono overflow-hidden select-none">
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <header className="h-10 flex items-center gap-3 px-4 border-b border-rim shrink-0">
         <span className="text-accent font-semibold text-sm tracking-wide">Oracle</span>
-        <StatusDot state={solverStatus.state} title={solverStatus.message} />
+        <StatusDot status={solverStatus} />
         <div className="w-px h-4 bg-rim" />
 
-        {/* Field selector */}
+        {/* Phase 1 field chips — B, |A|, C */}
         <div className="flex gap-0.5">
-          {(["phi", "A_magnitude", "B_magnitude", "J_magnitude"] as FieldName[]).map(f => (
+          {PHASE1_FIELDS.map(f => (
             <button
               key={f}
               onClick={() => setSelectedField(f)}
               className={`text-xs px-2 py-0.5 rounded transition-colors ${
                 selectedField === f
-                  ? FIELD_CHIP_COLOR[f]
+                  ? (FIELD_CHIP_COLOR[f] ?? DEFAULT_CHIP_COLOR)
                   : "text-slate-600 hover:text-slate-400"
               }`}
             >
-              {f === "phi" ? "φ" : f === "A_magnitude" ? "|A|" : f === "B_magnitude" ? "|B|" : "|J|"}
+              {FIELD_CHIP[f] ?? f}
             </button>
           ))}
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {/* Max value chip for selected field */}
           {result && (() => {
             const mx = result.maxima.find(m => m.field === selectedField);
             if (!mx) return null;
             const v = mx.max_value;
             const fmtV = (Math.abs(v) >= 1e3 || (Math.abs(v) < 1e-3 && v !== 0))
-              ? v.toExponential(2)
-              : v.toPrecision(3);
-            const units: Record<string, string> = {
-              phi: "V", A_magnitude: "Wb/m", B_magnitude: "T", J_magnitude: "A/m²",
-            };
+              ? v.toExponential(2) : v.toPrecision(3);
+            const unit = FIELD_UNITS[selectedField] ?? "";
             return (
-              <span className={`text-xs tabular-nums px-2 py-0.5 rounded ${FIELD_CHIP_COLOR[selectedField]}`}>
-                max {fmtV} {units[selectedField] ?? ""}
+              <span className={`text-xs tabular-nums px-2 py-0.5 rounded ${
+                FIELD_CHIP_COLOR[selectedField] ?? DEFAULT_CHIP_COLOR
+              }`}>
+                max {fmtV} {unit}
               </span>
             );
           })()}
+
+          {/* Solve stats */}
           {result && (
             <span className="text-xs text-slate-600 tabular-nums">
-              {result.solve_time_s.toFixed(1)}s · {result.mesh_nodes.toLocaleString()} nodes
+              {result.solve_time_s.toFixed(2)}s · {result.grid_cells.toLocaleString()} cells
             </span>
           )}
+
           {result && (
             <button onClick={() => setSaveModalOpen(true)} className="btn-ghost text-xs">
               Save
@@ -149,11 +149,11 @@ export default function App() {
         </div>
       </header>
 
-      {/* ── Error banner ───────────────────────────────────────────────── */}
+      {/* ── Error / warning banner ─────────────────────────────────────── */}
       {error && (
         <div className="bg-red-950/60 border-b border-red-800/40 px-4 py-1 text-xs text-red-300 flex items-center gap-2 shrink-0">
-          <span className="flex-1">{error}</span>
-          <button onClick={() => setError(null)} className="text-red-500 hover:text-red-300">✕</button>
+          <span className="flex-1 truncate">{error}</span>
+          <button onClick={() => setError(null)} className="text-red-500 hover:text-red-300 shrink-0">✕</button>
         </div>
       )}
 
@@ -170,7 +170,7 @@ export default function App() {
             />
           </div>
 
-          {/* Hypothesis history — collapsible at the bottom */}
+          {/* Hypothesis history — collapsible at bottom */}
           <div className="shrink-0 border-t border-rim">
             <button
               onClick={() => setShowHistory(h => !h)}
@@ -191,16 +191,26 @@ export default function App() {
           </div>
         </aside>
 
-        {/* ── 3-D viewer — fills everything right of the sidebar ───────── */}
-        <div className="flex-1 min-w-0 relative">
-          <VolumeViewer
-            volume={result?.volume ?? null}
-            selectedField={selectedField}
-            isSolving={isSolving}
-            maxima={result?.maxima ?? []}
-            coilParams={request.coil}
-            domainRadius={request.domain_radius_m}
-          />
+        {/* ── Right pane: 3-D viewer top, 2-D slices bottom ───────────── */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          {/* 3-D volume viewer */}
+          <div className="flex-1 relative min-h-0">
+            <VolumeViewer
+              volume={result?.volume ?? null}
+              selectedField={selectedField}
+              isSolving={isSolving}
+              maxima={result?.maxima ?? []}
+              entity={request.entities[0]}
+              domainRadius={request.solver.domain_radius_m}
+            />
+          </div>
+
+          {/* 2-D slice panel — shown when we have results */}
+          {result && result.slices.length > 0 && (
+            <div className="h-72 border-t border-rim shrink-0">
+              <SliceViewer result={result} selectedField={selectedField} />
+            </div>
+          )}
         </div>
       </div>
 
@@ -215,17 +225,17 @@ export default function App() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Small UI helpers
-// ---------------------------------------------------------------------------
+// ── Small UI helpers ──────────────────────────────────────────────────────────
 
-function StatusDot({ state, title }: { state: string; title: string }) {
+function StatusDot({ status }: { status: SolverStatus }) {
+  const { state, message, gpu_name } = status;
   const color =
-    state === "ready"   ? "bg-green-400" :
-    state === "error"   ? "bg-red-400"   :
-                          "bg-amber-400 animate-pulse";
+    state === "ready"       ? "bg-green-400" :
+    state === "error"       ? "bg-red-400"   :
+                              "bg-amber-400 animate-pulse";
+  const tip = gpu_name ? `${message} (${gpu_name})` : message;
   return (
-    <span title={title} className="flex items-center gap-1.5 text-xs text-slate-500">
+    <span title={tip} className="flex items-center gap-1.5 text-xs text-slate-500 cursor-default">
       <span className={`w-1.5 h-1.5 rounded-full ${color}`} />
       {state}
     </span>

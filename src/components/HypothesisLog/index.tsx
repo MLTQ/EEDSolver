@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { deleteHypothesis, loadHypotheses } from "../../lib/api";
 import type { FieldName, HypothesisEntry, SolveRequest } from "../../lib/fieldTypes";
-import { FIELD_CHIP_COLOR } from "../../lib/colormap";
+import { FIELD_CHIP_COLOR, DEFAULT_CHIP_COLOR } from "../../lib/colormap";
 
 interface Props {
   onRestoreParams: (r: SolveRequest) => void;
-  refreshTrigger:  number;  // increment to force a reload
+  refreshTrigger:  number;
 }
 
 export function HypothesisLog({ onRestoreParams, refreshTrigger }: Props) {
@@ -57,6 +57,9 @@ function EntryRow({
 }) {
   const primaryMax = entry.maxima[0];
   const ts = new Date(entry.timestamp);
+  const coilType = entry.request.entities[0]?.coil?.coil_type ?? "?";
+  const n3 = entry.request.solver.cells_per_axis;
+  const gemOn = entry.request.gem.enabled;
 
   return (
     <div className="flex items-start gap-2 px-3 py-2 border-b border-rim hover:bg-white/3 group">
@@ -68,11 +71,13 @@ function EntryRow({
           </span>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Chip label={entry.request.formulation} />
-          <Chip label={entry.request.coil.coil_type} />
-          <Chip label={entry.request.mesh_resolution} />
+          <Chip label={coilType} />
+          <Chip label={`${n3}³`} />
+          {gemOn && <Chip label="GEM" color="text-emerald-400 bg-emerald-900/30" />}
           {primaryMax && (
-            <span className={`text-xs px-1.5 py-0 rounded ${FIELD_CHIP_COLOR[primaryMax.field as FieldName]}`}>
+            <span className={`text-xs px-1.5 py-0 rounded ${
+              FIELD_CHIP_COLOR[primaryMax.field as FieldName] ?? DEFAULT_CHIP_COLOR
+            }`}>
               max {primaryMax.max_value.toExponential(2)}
             </span>
           )}
@@ -101,9 +106,9 @@ function EntryRow({
   );
 }
 
-function Chip({ label }: { label: string }) {
+function Chip({ label, color }: { label: string; color?: string }) {
   return (
-    <span className="text-xs text-slate-500 bg-white/5 px-1.5 py-0 rounded">
+    <span className={`text-xs px-1.5 py-0 rounded ${color ?? "text-slate-500 bg-white/5"}`}>
       {label}
     </span>
   );
