@@ -229,8 +229,9 @@ export const COIL_LABELS: Record<CoilType, string> = {
   rodin:           "Rodin coil",
 };
 
-/** Fields available after Phase 1+2 solve (Biot-Savart + static EED φ). */
-export const PHASE1_FIELDS: FieldName[] = ["B_magnitude", "A_magnitude", "C_field", "phi"];
+/** Fields available after Phase 1-4 solve.
+ *  GEM fields (phi_g) only appear in time-domain mode with GEM enabled. */
+export const PHASE1_FIELDS: FieldName[] = ["B_magnitude", "A_magnitude", "C_field", "phi", "phi_g"];
 
 /** All EM fields (add as phases complete). */
 export const EM_FIELDS: FieldName[] = [
