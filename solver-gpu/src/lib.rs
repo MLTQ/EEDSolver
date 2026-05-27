@@ -137,12 +137,25 @@ impl OracleSolver {
                     dt_s, cfl_max, grid.dx * 1e3, grid.n,
                 ));
             }
-            gstate.run_fdtd(&self.ctx, &grid, dt, n_steps)?;
+            // γ=0 → Lorenz gauge (Maxwell), γ=1 → full EED
+            let gamma = if request.solver.lorenz_gauge { 0.0f32 }
+                        else { request.eed.gamma as f32 };
+            gstate.run_fdtd(&self.ctx, &grid, dt, n_steps, gamma)?;
         }
 
-        // ── Phase 4: GEM ─────────────────────────────────────────────────────
-        if request.gem.enabled {
-            warnings.push("Phase 4 (GEM sector) not yet implemented.".into());
+        // ── Phase 4: GEM gravitational sector ────────────────────────────────
+        if request.gem.enabled && request.gem.kappa_g != 0.0 {
+            if let SolverMode::TimeDomain { dt_s, n_steps } = cfg.mode {
+                let cfl_max = grid.cfl_dt() as f32;
+                let dt      = (dt_s as f32).min(cfl_max);
+                let kappa   = request.gem.kappa_g as f32;
+                gstate.run_gem_fdtd(&self.ctx, &grid, dt, n_steps, kappa)?;
+                log::info!("GEM: κ_G={:.3e}", kappa);
+            } else {
+                warnings.push(
+                    "GEM sector requires time-domain mode (FDTD). Enable it in the Mode section.".into()
+                );
+            }
         }
 
         // ── Post-processing ──────────────────────────────────────────────────
@@ -163,7 +176,8 @@ impl OracleSolver {
                 f @ (FieldName::BMagnitude
                    | FieldName::AMagnitude
                    | FieldName::CField
-                   | FieldName::Phi) => f.clone(),
+                   | FieldName::Phi
+                   | FieldName::PhiG) => f.clone(),
                 _ => {
                     warnings.push(format!(
                         "Volume field {:?} not yet implemented — falling back to B_magnitude.",

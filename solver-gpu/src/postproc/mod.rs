@@ -47,10 +47,11 @@ pub fn compute_maxima(
     let dx = grid.dx as f32;
     let r  = grid.extent as f32;
 
-    let b_data   = gstate.readback(ctx, &gstate.b_vec, gstate.vec_len())?;
-    let a_data   = gstate.readback(ctx, &gstate.a_vec, gstate.vec_len())?;
-    let c_data   = gstate.readback(ctx, &gstate.c_fld, gstate.scalar_len())?;
-    let phi_data = gstate.readback(ctx, &gstate.phi,   gstate.scalar_len())?;
+    let b_data    = gstate.readback(ctx, &gstate.b_vec,  gstate.vec_len())?;
+    let a_data    = gstate.readback(ctx, &gstate.a_vec,  gstate.vec_len())?;
+    let c_data    = gstate.readback(ctx, &gstate.c_fld,  gstate.scalar_len())?;
+    let phi_data  = gstate.readback(ctx, &gstate.phi,    gstate.scalar_len())?;
+    let phi_g_data = gstate.readback(ctx, &gstate.phi_g, gstate.scalar_len())?;
 
     let mut maxima = Vec::new();
 
@@ -104,6 +105,15 @@ pub fn compute_maxima(
         });
     }
 
+    let (phi_g_max, phi_g_idx) = scalar_max(&phi_g_data);
+    if phi_g_max > 0.0 {
+        maxima.push(FieldMaximum {
+            field:        FieldName::PhiG,
+            max_value:    phi_g_max as f64,
+            max_location: index_to_world(phi_g_idx, n1, dx, r),
+        });
+    }
+
     Ok(maxima)
 }
 
@@ -136,6 +146,9 @@ pub fn extract_volume(
         }
         FieldName::Phi => {
             gstate.readback(ctx, &gstate.phi, total)?
+        }
+        FieldName::PhiG => {
+            gstate.readback(ctx, &gstate.phi_g, total)?
         }
         _ => vec![0.0f32; total],
     };
@@ -212,7 +225,11 @@ fn extract_slice(
             let phi = gstate.readback(ctx, &gstate.phi, gstate.scalar_len())?;
             slice_scalar(&phi, n1, req.axis, layer)
         }
-        // Phase 3+ fields — return zeros.
+        FieldName::PhiG => {
+            let pg = gstate.readback(ctx, &gstate.phi_g, gstate.scalar_len())?;
+            slice_scalar(&pg, n1, req.axis, layer)
+        }
+        // Phase 5+ fields — return zeros.
         _ => vec![0.0f32; (n1 * n1) as usize],
     };
 

@@ -31,10 +31,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct FdtdParams {
-    dx: f32,
-    dt: f32,
-    n1: u32,
-    _pad: u32,
+    dx:    f32,
+    dt:    f32,
+    n1:    u32,
+    gamma: f32,  // EED coupling strength: 1.0 = full EED, 0.0 = Maxwell (Lorenz gauge)
 }
 
 @group(0) @binding(0) var<storage, read_write> phi:     array<f32>;
@@ -123,7 +123,10 @@ fn vel_step(@builtin(global_invocation_id) gid: vec3<u32>) {
         (av_comp(ix,   iy,   iz+1, n, 2u) - av_comp(ix,   iy,   iz-1, n, 2u)) * inv2dx;
 
     // ── φ velocity update ─────────────────────────────────────────────────────
-    let acc_phi = C2 * (lap_phi - div_av);
+    // EED: acc_phi = c²∇²φ − γ·c²·div(∂A/∂t)
+    // γ=1: full EED coupling (deleted DOF C is dynamical)
+    // γ=0: Maxwell (Lorenz gauge, C=0)
+    let acc_phi = C2 * (lap_phi - params.gamma * div_av);
     phi_vel[flat] += dt * acc_phi;
 
     // ── Laplacian of A (each component) + ∇(φ_vel) ───────────────────────────
@@ -159,9 +162,10 @@ fn vel_step(@builtin(global_invocation_id) gid: vec3<u32>) {
     let gpv_z = (pv_at(ix,   iy,   iz+1, n) - pv_at(ix,   iy,   iz-1, n)) * inv2dx;
 
     // ── A velocity update ─────────────────────────────────────────────────────
-    a_vel[a_base]      += dt * C2 * (lap_ax - gpv_x);
-    a_vel[a_base + 1u] += dt * C2 * (lap_ay - gpv_y);
-    a_vel[a_base + 2u] += dt * C2 * (lap_az - gpv_z);
+    // EED: acc_A = c²∇²A − γ·c²·∇(∂φ/∂t)
+    a_vel[a_base]      += dt * C2 * (lap_ax - params.gamma * gpv_x);
+    a_vel[a_base + 1u] += dt * C2 * (lap_ay - params.gamma * gpv_y);
+    a_vel[a_base + 2u] += dt * C2 * (lap_az - params.gamma * gpv_z);
     // a_vel[a_base + 3u] stays 0 (padding component)
 }
 
