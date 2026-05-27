@@ -54,10 +54,13 @@ pub struct JacobiParamsGpu {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct FdtdParamsGpu {
-    pub dx:    f32,
-    pub dt:    f32,
-    pub n1:    u32,
-    pub gamma: f32,  // EED coupling: 1.0=full EED, 0.0=Maxwell
+    pub dx:           f32,
+    pub dt:           f32,
+    pub n1:           u32,
+    pub gamma:        f32,
+    pub sponge_cells: u32,
+    pub sigma_max:    f32,
+    pub _pad:         [u32; 2],
 }
 
 /// Uniform params for the C-field update kernel.
@@ -438,7 +441,13 @@ impl GpuGridState {
         });
 
         // Build bind groups.
-        let fdtd_params = FdtdParamsGpu { dx: grid.dx as f32, dt, n1, gamma };
+        // Sponge layer: 8 cells deep, σ_max = c/dx ÷ 4  (quarter-wave damping).
+        let sponge_cells = (n1 / 8).max(4);
+        let sigma_max    = (2.998e8f32 / grid.dx as f32) * 0.25;
+        let fdtd_params  = FdtdParamsGpu {
+            dx: grid.dx as f32, dt, n1, gamma,
+            sponge_cells, sigma_max, _pad: [0; 2],
+        };
         let fdtd_params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label:    Some("fdtd_params"),
             contents: bytes_of(&fdtd_params),

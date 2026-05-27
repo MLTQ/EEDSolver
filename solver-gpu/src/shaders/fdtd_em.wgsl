@@ -31,10 +31,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct FdtdParams {
-    dx:    f32,
-    dt:    f32,
-    n1:    u32,
-    gamma: f32,  // EED coupling strength: 1.0 = full EED, 0.0 = Maxwell (Lorenz gauge)
+    dx:          f32,
+    dt:          f32,
+    n1:          u32,
+    gamma:       f32,   // EED coupling: 1.0=full EED, 0.0=Maxwell
+    // Sponge layer (absorbing BC): cells nearest boundary are damped.
+    // sponge_cells = number of cells in the absorbing sponge layer.
+    // sigma_max    = peak damping rate [1/s].  0 = no damping (hard wall).
+    sponge_cells: u32,
+    sigma_max:    f32,
+    _pad:         vec2<u32>,
 }
 
 @group(0) @binding(0) var<storage, read_write> phi:     array<f32>;
@@ -122,12 +128,19 @@ fn vel_step(@builtin(global_invocation_id) gid: vec3<u32>) {
         (av_comp(ix,   iy+1, iz,   n, 1u) - av_comp(ix,   iy-1, iz,   n, 1u)) * inv2dx +
         (av_comp(ix,   iy,   iz+1, n, 2u) - av_comp(ix,   iy,   iz-1, n, 2u)) * inv2dx;
 
+    // ── Sponge layer damping ──────────────────────────────────────────────────
+    // Minimum distance from any domain face (in cells).
+    let sc    = i32(params.sponge_cells);
+    let dist  = min(min(ix, n-1-ix), min(min(iy, n-1-iy), min(iz, n-1-iz)));
+    var sponge_damp = 0.0f32;
+    if dist < sc && params.sigma_max > 0.0 {
+        let t   = 1.0 - f32(dist) / f32(sc);  // 1 at wall → 0 at interior
+        sponge_damp = params.sigma_max * t * t;  // quadratic profile
+    }
+
     // ── φ velocity update ─────────────────────────────────────────────────────
-    // EED: acc_phi = c²∇²φ − γ·c²·div(∂A/∂t)
-    // γ=1: full EED coupling (deleted DOF C is dynamical)
-    // γ=0: Maxwell (Lorenz gauge, C=0)
     let acc_phi = C2 * (lap_phi - params.gamma * div_av);
-    phi_vel[flat] += dt * acc_phi;
+    phi_vel[flat] = (phi_vel[flat] + dt * acc_phi) * (1.0 - sponge_damp * dt);
 
     // ── Laplacian of A (each component) + ∇(φ_vel) ───────────────────────────
     // For component k: ∂²Ak/∂t² = c²∇²Ak − c²·∂(φ_vel)/∂xk
@@ -162,10 +175,11 @@ fn vel_step(@builtin(global_invocation_id) gid: vec3<u32>) {
     let gpv_z = (pv_at(ix,   iy,   iz+1, n) - pv_at(ix,   iy,   iz-1, n)) * inv2dx;
 
     // ── A velocity update ─────────────────────────────────────────────────────
-    // EED: acc_A = c²∇²A − γ·c²·∇(∂φ/∂t)
-    a_vel[a_base]      += dt * C2 * (lap_ax - params.gamma * gpv_x);
-    a_vel[a_base + 1u] += dt * C2 * (lap_ay - params.gamma * gpv_y);
-    a_vel[a_base + 2u] += dt * C2 * (lap_az - params.gamma * gpv_z);
+    // EED: acc_A = c²∇²A − γ·c²·∇(∂φ/∂t);  also apply sponge damping.
+    let damp = 1.0 - sponge_damp * dt;
+    a_vel[a_base]      = (a_vel[a_base]      + dt * C2 * (lap_ax - params.gamma * gpv_x)) * damp;
+    a_vel[a_base + 1u] = (a_vel[a_base + 1u] + dt * C2 * (lap_ay - params.gamma * gpv_y)) * damp;
+    a_vel[a_base + 2u] = (a_vel[a_base + 2u] + dt * C2 * (lap_az - params.gamma * gpv_z)) * damp;
     // a_vel[a_base + 3u] stays 0 (padding component)
 }
 
