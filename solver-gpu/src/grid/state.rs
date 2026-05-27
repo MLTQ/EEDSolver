@@ -43,10 +43,32 @@ impl GridParamsGpu {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct JacobiParamsGpu {
-    pub dx:   f32,   // cell spacing [m]
-    pub m2:   f32,   // m² = α² (Yukawa mass squared) [1/m²]
-    pub n1:   u32,   // vertices per axis
+    pub dx:   f32,
+    pub m2:   f32,
+    pub n1:   u32,
     pub _pad: u32,
+}
+
+/// Uniform params for the FDTD leapfrog kernels.
+/// Must match `FdtdParams` in `fdtd_em.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct FdtdParamsGpu {
+    pub dx:   f32,
+    pub dt:   f32,
+    pub n1:   u32,
+    pub _pad: u32,
+}
+
+/// Uniform params for the C-field update kernel.
+/// Must match `CFieldParams` in `c_field.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct CFieldParamsGpu {
+    pub dx:     f32,
+    pub inv_c2: f32,
+    pub n1:     u32,
+    pub _pad:   u32,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,16 +78,20 @@ pub struct JacobiParamsGpu {
 /// All GPU field buffers for one solve.
 ///
 /// Layout per vertex (z-major flat index: `i = ix + iy·n1 + iz·n1²`):
-/// - `phi`:   1 × f32  — scalar potential φ [V]
-/// - `a_vec`: 4 × f32  — [Ax, Ay, Az, 0] [V·s/m]
-/// - `b_vec`: 4 × f32  — [Bx, By, Bz, 0] [T]
-/// - `c_fld`: 1 × f32  — EED scalar C [1/m]
+/// - `phi`:     1 × f32  — scalar potential φ [V]
+/// - `a_vec`:   4 × f32  — [Ax, Ay, Az, 0] [V·s/m]
+/// - `phi_vel`: 1 × f32  — ∂φ/∂t [V/s]   (FDTD velocity state)
+/// - `a_vel`:   4 × f32  — [∂Ax/∂t, ∂Ay/∂t, ∂Az/∂t, 0]  (FDTD velocity state)
+/// - `b_vec`:   4 × f32  — [Bx, By, Bz, 0] [T]  (derived)
+/// - `c_fld`:   1 × f32  — EED scalar C [1/m]    (derived)
 pub struct GpuGridState {
-    pub n1:    u32,             // vertices per axis = n_cells + 1
-    pub phi:   wgpu::Buffer,   // n1³ × f32
-    pub a_vec: wgpu::Buffer,   // n1³ × 4×f32
-    pub b_vec: wgpu::Buffer,   // n1³ × 4×f32
-    pub c_fld: wgpu::Buffer,   // n1³ × f32
+    pub n1:      u32,
+    pub phi:     wgpu::Buffer,   // n1³ × f32
+    pub a_vec:   wgpu::Buffer,   // n1³ × 4×f32
+    pub phi_vel: wgpu::Buffer,   // n1³ × f32   (zero in static mode)
+    pub a_vel:   wgpu::Buffer,   // n1³ × 4×f32 (zero in static mode)
+    pub b_vec:   wgpu::Buffer,   // n1³ × 4×f32 (derived)
+    pub c_fld:   wgpu::Buffer,   // n1³ × f32   (derived)
 }
 
 impl GpuGridState {
@@ -94,10 +120,12 @@ impl GpuGridState {
 
         Self {
             n1,
-            phi:   make("phi",   total),
-            a_vec: make("a_vec", total * 4),
-            b_vec: make("b_vec", total * 4),
-            c_fld: make("c_fld", total),
+            phi:     make("phi",     total),
+            a_vec:   make("a_vec",   total * 4),
+            phi_vel: make("phi_vel", total),
+            a_vel:   make("a_vel",   total * 4),
+            b_vec:   make("b_vec",   total * 4),
+            c_fld:   make("c_fld",   total),
         }
     }
 
@@ -318,6 +346,141 @@ impl GpuGridState {
 
     /// Total number of f32 values in the vector field buffers (n1³ × 4).
     pub fn vec_len(&self) -> usize { self.scalar_len() * 4 }
+
+    // ── Phase 3: FDTD time-domain ─────────────────────────────────────────────
+
+    /// Run `n_steps` FDTD leapfrog iterations.
+    ///
+    /// Each step encodes two GPU passes (vel_step, pos_step) into one command
+    /// buffer to avoid CPU round-trips.  After all steps, `c_fld` is updated.
+    ///
+    /// # Initial conditions
+    /// Call after `run_biot_savart()` to start from the static A field.
+    /// `phi_vel` and `a_vel` are zero-initialised (static start).
+    pub fn run_fdtd(
+        &self,
+        ctx:     &GpuContext,
+        grid:    &YeeGrid,
+        dt:      f32,
+        n_steps: u32,
+    ) -> Result<(), SolverError> {
+        if n_steps == 0 { return Ok(()); }
+
+        const C: f32 = 2.998e8_f32;
+        const C2: f32 = C * C;
+        const INV_C2: f32 = 1.0 / C2;
+
+        let dev  = ctx.device();
+        let n1   = self.n1;
+
+        // Build pipelines once.
+        let em_shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label:  Some("fdtd_em"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/fdtd_em.wgsl").into()),
+        });
+
+        let vel_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("fdtd_vel"), layout: None, module: &em_shader,
+            entry_point: "vel_step",
+            compilation_options: Default::default(), cache: None,
+        });
+
+        let pos_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("fdtd_pos"), layout: None, module: &em_shader,
+            entry_point: "pos_step",
+            compilation_options: Default::default(), cache: None,
+        });
+
+        let cf_shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label:  Some("c_field"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/c_field.wgsl").into()),
+        });
+
+        let cf_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("c_field_update"), layout: None, module: &cf_shader,
+            entry_point: "update_c",
+            compilation_options: Default::default(), cache: None,
+        });
+
+        // Build bind groups.
+        let fdtd_params = FdtdParamsGpu { dx: grid.dx as f32, dt, n1, _pad: 0 };
+        let fdtd_params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:    Some("fdtd_params"),
+            contents: bytes_of(&fdtd_params),
+            usage:    wgpu::BufferUsages::UNIFORM,
+        });
+
+        let cf_params = CFieldParamsGpu { dx: grid.dx as f32, inv_c2: INV_C2, n1, _pad: 0 };
+        let cf_params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:    Some("cf_params"),
+            contents: bytes_of(&cf_params),
+            usage:    wgpu::BufferUsages::UNIFORM,
+        });
+
+        let em_entries = |layout: &wgpu::BindGroupLayout| {
+            dev.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("fdtd_em_bg"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: self.phi.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: self.a_vec.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: self.phi_vel.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: self.a_vel.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 4, resource: fdtd_params_buf.as_entire_binding() },
+                ],
+            })
+        };
+
+        // vel_step and pos_step share the same bind group layout.
+        let vel_bg = em_entries(&vel_pipeline.get_bind_group_layout(0));
+        let pos_bg = em_entries(&pos_pipeline.get_bind_group_layout(0));
+
+        let cf_bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("cf_bg"),
+            layout: &cf_pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.a_vec.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.phi_vel.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: self.c_fld.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: cf_params_buf.as_entire_binding() },
+            ],
+        });
+
+        let wg = (n1 * n1 * n1).div_ceil(256);
+
+        // Encode all n_steps into ONE command buffer — no CPU round-trips.
+        let mut enc = dev.create_command_encoder(&Default::default());
+        for _ in 0..n_steps {
+            // Pass 1: update velocities in-place.
+            {
+                let mut pass = enc.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&vel_pipeline);
+                pass.set_bind_group(0, &vel_bg, &[]);
+                pass.dispatch_workgroups(wg, 1, 1);
+            }
+            // Pass 2: update positions using new velocities.
+            {
+                let mut pass = enc.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&pos_pipeline);
+                pass.set_bind_group(0, &pos_bg, &[]);
+                pass.dispatch_workgroups(wg, 1, 1);
+            }
+        }
+        // Update C = div(A) + (1/c²)·∂φ/∂t after all steps.
+        {
+            let mut pass = enc.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&cf_pipeline);
+            pass.set_bind_group(0, &cf_bg, &[]);
+            pass.dispatch_workgroups(wg, 1, 1);
+        }
+
+        ctx.queue().submit([enc.finish()]);
+        dev.poll(wgpu::MaintainBase::Wait);
+
+        log::info!("FDTD: {n_steps} steps × dt={:.3e} s  (sim time {:.3e} s)",
+            dt, n_steps as f32 * dt);
+        Ok(())
+    }
 
     // ── Phase 2: Static EED — Jacobi elliptic solver ─────────────────────────
 

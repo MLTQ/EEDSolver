@@ -128,8 +128,16 @@ impl OracleSolver {
         }
 
         // ── Phase 3: FDTD ────────────────────────────────────────────────────
-        if matches!(cfg.mode, SolverMode::TimeDomain { .. }) {
-            warnings.push("Phase 3 (FDTD time-domain) not yet implemented.".into());
+        if let SolverMode::TimeDomain { dt_s, n_steps } = cfg.mode {
+            let cfl_max = grid.cfl_dt() as f32;
+            let dt      = (dt_s as f32).min(cfl_max);
+            if dt < dt_s as f32 {
+                warnings.push(format!(
+                    "dt={:.3e}s clamped to CFL limit {:.3e}s (dx={:.3}mm, n={})",
+                    dt_s, cfl_max, grid.dx * 1e3, grid.n,
+                ));
+            }
+            gstate.run_fdtd(&self.ctx, &grid, dt, n_steps)?;
         }
 
         // ── Phase 4: GEM ─────────────────────────────────────────────────────

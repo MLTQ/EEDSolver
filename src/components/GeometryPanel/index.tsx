@@ -1,7 +1,7 @@
 import React from "react";
 import type {
   CoilEntity, CoilParams, CoilType,
-  EedParams, FieldName, GemParams, SolveRequest, SolverConfig,
+  EedParams, FieldName, GemParams, SolveRequest, SolverConfig, SolverMode,
 } from "../../lib/fieldTypes";
 import { COIL_LABELS, FIELD_CHIP, PHASE1_FIELDS } from "../../lib/fieldTypes";
 
@@ -99,6 +99,34 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
               </button>
             ))}
           </div>
+        )}
+      </Section>
+
+      {/* ── Solver mode ───────────────────────────────────────────────── */}
+      <Section label="Mode">
+        <Toggle
+          label="Time-domain FDTD"
+          hint="Leapfrog propagation of φ and A — reveals C-field dynamics"
+          checked={request.solver.mode.mode === "time_domain"}
+          onChange={v => setSolver({
+            mode: v
+              ? { mode: "time_domain", dt_s: 0, n_steps: 64 }
+              : { mode: "static" }
+          } as Partial<SolverConfig>)}
+        />
+        {request.solver.mode.mode === "time_domain" && (
+          <>
+            <Slider
+              label="Steps"  unit=""
+              value={(request.solver.mode as Extract<SolverMode, { mode: "time_domain" }>).n_steps}
+              min={16} max={512} step={16}
+              onChange={v => setSolver({ mode: { ...request.solver.mode, n_steps: Math.round(v) } as SolverMode })}
+              fmt={v => String(Math.round(v))}
+            />
+            <div className="text-xs text-slate-600 pl-0.5">
+              dt auto-set to CFL limit (dx/c√3)
+            </div>
+          </>
         )}
       </Section>
 
