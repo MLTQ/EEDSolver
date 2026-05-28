@@ -1298,11 +1298,50 @@ impl GpuGridState {
             usage:    wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        // Build pipelines from cached shader module.
+        // ── Explicit bind group layout shared by all 4 CG kernels ─────────────
+        // wgpu's per-entry-point reflection only exposes the bindings each
+        // entry point actually touches: `cg_matvec` uses {2,3,7} → 3 entries.
+        // Calling `get_bind_group_layout(0)` from that pipeline and then
+        // passing a descriptor with all 8 entries causes a validation panic.
+        // We declare the full 8-binding layout explicitly so one bind group
+        // works for all four kernels — the same strategy as GEM FDTD.
+        let cs         = wgpu::ShaderStages::COMPUTE;
+        let storage_rw = wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false, min_binding_size: None,
+        };
+        let storage_ro = wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false, min_binding_size: None,
+        };
+        let uniform_ty = wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false, min_binding_size: None,
+        };
+        let cg_bgl = dev.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label:   Some("cg_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry { binding: 0, visibility: cs, ty: storage_rw, count: None }, // u_sol
+                wgpu::BindGroupLayoutEntry { binding: 1, visibility: cs, ty: storage_rw, count: None }, // r_vec
+                wgpu::BindGroupLayoutEntry { binding: 2, visibility: cs, ty: storage_rw, count: None }, // p_vec
+                wgpu::BindGroupLayoutEntry { binding: 3, visibility: cs, ty: storage_rw, count: None }, // ap_vec
+                wgpu::BindGroupLayoutEntry { binding: 4, visibility: cs, ty: storage_ro, count: None }, // a_dot
+                wgpu::BindGroupLayoutEntry { binding: 5, visibility: cs, ty: storage_ro, count: None }, // b_dot
+                wgpu::BindGroupLayoutEntry { binding: 6, visibility: cs, ty: storage_rw, count: None }, // partial
+                wgpu::BindGroupLayoutEntry { binding: 7, visibility: cs, ty: uniform_ty, count: None }, // params
+            ],
+        });
+        let cg_pipeline_layout = dev.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label:                Some("cg_pipeline_layout"),
+            bind_group_layouts:   &[&cg_bgl],
+            push_constant_ranges: &[],
+        });
+
+        // Build pipelines using the shared explicit layout.
         let mk_pl = |label: &str, entry: &str| dev.create_compute_pipeline(
             &wgpu::ComputePipelineDescriptor {
-                label: Some(label), layout: None, module: &ctx.shaders().cg_scalar,
-                entry_point: entry,
+                label: Some(label), layout: Some(&cg_pipeline_layout),
+                module: &ctx.shaders().cg_scalar, entry_point: entry,
                 compilation_options: Default::default(), cache: None,
             }
         );
@@ -1311,11 +1350,12 @@ impl GpuGridState {
         let xr_pl  = mk_pl("cg_update_xr", "cg_update_xr");
         let p_pl   = mk_pl("cg_update_p",  "cg_update_p");
 
-        // Bind group factory.
-        let bg = |pl: &wgpu::ComputePipeline, adot: &wgpu::Buffer, bdot: &wgpu::Buffer| {
+        // Bind group factory — always uses the explicit layout (all 8 bindings).
+        // Kernels that don't read a_dot/b_dot simply ignore those slots.
+        let bg = |adot: &wgpu::Buffer, bdot: &wgpu::Buffer| {
             dev.create_bind_group(&wgpu::BindGroupDescriptor {
                 label:   Some("cg_bg"),
-                layout:  &pl.get_bind_group_layout(0),
+                layout:  &cg_bgl,
                 entries: &[
                     wgpu::BindGroupEntry { binding: 0, resource: self.phi.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 1, resource: r_buf.as_entire_binding() },
@@ -1329,11 +1369,11 @@ impl GpuGridState {
             })
         };
 
-        let mv_bg   = bg(&mv_pl,  &r_buf,  &p_buf);    // a_dot/b_dot unused by matvec
-        let pap_bg  = bg(&dot_pl, &p_buf,  &ap_buf);   // dot(p, ap)
-        let rr_bg   = bg(&dot_pl, &r_buf,  &r_buf);    // dot(r, r)  ← after update_xr
-        let xr_bg   = bg(&xr_pl,  &r_buf,  &p_buf);    // a_dot/b_dot unused by update_xr
-        let p_bg    = bg(&p_pl,   &r_buf,  &p_buf);    // a_dot/b_dot unused by update_p
+        let mv_bg   = bg(&r_buf,  &p_buf);    // a_dot/b_dot unused by matvec
+        let pap_bg  = bg(&p_buf,  &ap_buf);   // dot(p, ap)
+        let rr_bg   = bg(&r_buf,  &r_buf);    // dot(r, r)  ← after update_xr
+        let xr_bg   = bg(&r_buf,  &p_buf);    // a_dot/b_dot unused by update_xr
+        let p_bg    = bg(&r_buf,  &p_buf);    // a_dot/b_dot unused by update_p
 
         // Tiny dot-product readback: reads par_buf (≤ 8192 floats), sums on CPU.
         let dot_sum = |enc_pre: Option<wgpu::CommandBuffer>| -> Result<f32, SolverError> {
