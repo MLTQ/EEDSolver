@@ -37,7 +37,11 @@ struct CgParams {
     n1:    u32,
     alpha: f32,    // CG step length (CPU sets this before cg_update_xr)
     beta:  f32,    // CG direction mix (CPU sets this before cg_update_p)
-    _pad:  vec3<u32>,
+    // Three scalar u32 pads (not vec3<u32>) — vec3 has 16-byte WGSL alignment
+    // which would inflate the struct to 48 bytes and mismatch the Rust side.
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 @group(0) @binding(0) var<storage, read_write> u_sol:   array<f32>;
