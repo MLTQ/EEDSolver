@@ -262,17 +262,10 @@ impl GpuGridState {
             usage:    wgpu::BufferUsages::UNIFORM,
         });
 
-        let shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label:  Some("biot_savart"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/biot.wgsl").into()
-            ),
-        });
-
         let pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label:               Some("biot_savart"),
             layout:              None,
-            module:              &shader,
+            module:              &ctx.shaders().biot,
             entry_point:         "biot_savart",
             compilation_options: Default::default(),
             cache:               None,
@@ -338,17 +331,10 @@ impl GpuGridState {
             usage:    wgpu::BufferUsages::UNIFORM,
         });
 
-        let shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label:  Some("derive_fields"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/derive.wgsl").into()
-            ),
-        });
-
         let pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label:               Some("derive_fields"),
             layout:              None,
-            module:              &shader,
+            module:              &ctx.shaders().derive,
             entry_point:         "derive_fields",
             compilation_options: Default::default(),
             cache:               None,
@@ -673,31 +659,21 @@ impl GpuGridState {
         let dev  = ctx.device();
         let n1   = self.n1;
 
-        // Build pipelines once.
-        let em_shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label:  Some("fdtd_em"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/fdtd_em.wgsl").into()),
-        });
-
+        // Build pipelines once — shader modules come from the pre-compiled cache.
         let vel_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("fdtd_vel"), layout: None, module: &em_shader,
+            label: Some("fdtd_vel"), layout: None, module: &ctx.shaders().fdtd_em,
             entry_point: "vel_step",
             compilation_options: Default::default(), cache: None,
         });
 
         let pos_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("fdtd_pos"), layout: None, module: &em_shader,
+            label: Some("fdtd_pos"), layout: None, module: &ctx.shaders().fdtd_em,
             entry_point: "pos_step",
             compilation_options: Default::default(), cache: None,
         });
 
-        let cf_shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label:  Some("c_field"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/c_field.wgsl").into()),
-        });
-
         let cf_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("c_field_update"), layout: None, module: &cf_shader,
+            label: Some("c_field_update"), layout: None, module: &ctx.shaders().c_field,
             entry_point: "update_c",
             compilation_options: Default::default(), cache: None,
         });
@@ -846,38 +822,24 @@ impl GpuGridState {
         let dev  = ctx.device();
         let n1   = self.n1;
 
-        // Build FDTD pipelines (same as run_fdtd_sponge).
-        let em_shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label:  Some("fdtd_em_ac"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/fdtd_em.wgsl").into()),
-        });
+        // Build FDTD pipelines from pre-compiled shader cache.
         let vel_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("fdtd_vel_ac"), layout: None, module: &em_shader,
+            label: Some("fdtd_vel_ac"), layout: None, module: &ctx.shaders().fdtd_em,
             entry_point: "vel_step",
             compilation_options: Default::default(), cache: None,
         });
         let pos_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("fdtd_pos_ac"), layout: None, module: &em_shader,
+            label: Some("fdtd_pos_ac"), layout: None, module: &ctx.shaders().fdtd_em,
             entry_point: "pos_step",
             compilation_options: Default::default(), cache: None,
         });
-        let cf_shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label:  Some("c_field_ac"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/c_field.wgsl").into()),
-        });
         let cf_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("c_field_update_ac"), layout: None, module: &cf_shader,
+            label: Some("c_field_update_ac"), layout: None, module: &ctx.shaders().c_field,
             entry_point: "update_c",
             compilation_options: Default::default(), cache: None,
         });
-
-        // inject_j pipeline.
-        let inj_shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label:  Some("inject_j"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/inject_j.wgsl").into()),
-        });
         let inj_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("inject_j_pl"), layout: None, module: &inj_shader,
+            label: Some("inject_j_pl"), layout: None, module: &ctx.shaders().inject_j,
             entry_point: "inject_j",
             compilation_options: Default::default(), cache: None,
         });
@@ -1035,11 +997,6 @@ impl GpuGridState {
         let dev = ctx.device();
         let n1  = self.n1;
 
-        let gem_shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label:  Some("fdtd_gem"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/fdtd_gem.wgsl").into()),
-        });
-
         let gem_params = GemParamsGpu { dx: grid.dx as f32, dt, n1, kappa_g };
         let gem_params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label:    Some("gem_params"),
@@ -1085,13 +1042,13 @@ impl GpuGridState {
         });
 
         let vel_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("gem_vel"), layout: Some(&pipeline_layout), module: &gem_shader,
+            label: Some("gem_vel"), layout: Some(&pipeline_layout), module: &ctx.shaders().fdtd_gem,
             entry_point: "vel_gem",
             compilation_options: Default::default(), cache: None,
         });
 
         let pos_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("gem_pos"), layout: Some(&pipeline_layout), module: &gem_shader,
+            label: Some("gem_pos"), layout: Some(&pipeline_layout), module: &ctx.shaders().fdtd_gem,
             entry_point: "pos_gem",
             compilation_options: Default::default(), cache: None,
         });
@@ -1193,15 +1150,10 @@ impl GpuGridState {
             usage:    wgpu::BufferUsages::UNIFORM,
         });
 
-        let shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label:  Some("jacobi"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/jacobi.wgsl").into()),
-        });
-
         let pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label:               Some("jacobi_step"),
             layout:              None,
-            module:              &shader,
+            module:              &ctx.shaders().jacobi,
             entry_point:         "jacobi_step",
             compilation_options: Default::default(),
             cache:               None,
@@ -1346,14 +1298,10 @@ impl GpuGridState {
             usage:    wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        // Compile shader + pipelines once.
-        let shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label:  Some("cg_scalar"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/cg_scalar.wgsl").into()),
-        });
+        // Build pipelines from cached shader module.
         let mk_pl = |label: &str, entry: &str| dev.create_compute_pipeline(
             &wgpu::ComputePipelineDescriptor {
-                label: Some(label), layout: None, module: &shader,
+                label: Some(label), layout: None, module: &ctx.shaders().cg_scalar,
                 entry_point: entry,
                 compilation_options: Default::default(), cache: None,
             }
@@ -1505,17 +1453,10 @@ impl GpuGridState {
             usage:    wgpu::BufferUsages::UNIFORM,
         });
 
-        let shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label:  Some("observables"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/observables.wgsl").into()
-            ),
-        });
-
         let pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label:               Some("compute_obs"),
             layout:              None,
-            module:              &shader,
+            module:              &ctx.shaders().observables,
             entry_point:         "compute_obs",
             compilation_options: Default::default(),
             cache:               None,
@@ -1603,15 +1544,10 @@ impl GpuGridState {
             usage:    wgpu::BufferUsages::UNIFORM,
         });
 
-        let shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label:  Some("jacobi_a"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/jacobi_a.wgsl").into()),
-        });
-
         let pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label:               Some("jacobi_a_step"),
             layout:              None,
-            module:              &shader,
+            module:              &ctx.shaders().jacobi_a,
             entry_point:         "jacobi_a_step",
             compilation_options: Default::default(),
             cache:               None,
