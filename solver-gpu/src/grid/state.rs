@@ -755,37 +755,55 @@ impl GpuGridState {
         let wg       = (n1 * n1 * n1).div_ceil(256);
         let c_bytes  = (self.scalar_len() * 4) as u64;
 
-        // Encode all n_steps into ONE command buffer — no CPU round-trips.
-        let mut enc = dev.create_command_encoder(&Default::default());
-        for _ in 0..n_steps {
-            // Snapshot current C into c_fld_prev (used by GEM coupling).
-            enc.copy_buffer_to_buffer(&self.c_fld, 0, &self.c_fld_prev, 0, c_bytes);
+        // Batched FDTD — submit every STEP_BATCH steps to stay under Metal's
+        // GPU-watchdog timeout (~5 s on macOS).  Encoding the entire loop into
+        // one command buffer triggers the watchdog at ~300 steps on 128³+ grids.
+        const STEP_BATCH: u32 = 32;
 
-            // Pass 1: update EM velocities.
-            {
-                let mut pass = enc.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&vel_pipeline);
-                pass.set_bind_group(0, &vel_bg, &[]);
-                pass.dispatch_workgroups(wg, 1, 1);
-            }
-            // Pass 2: update EM positions using new velocities.
-            {
-                let mut pass = enc.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&pos_pipeline);
-                pass.set_bind_group(0, &pos_bg, &[]);
-                pass.dispatch_workgroups(wg, 1, 1);
-            }
+        // Snapshot c_fld → c_fld_prev once before the first batch.
+        // c_fld is not updated inside the loop so all per-step snapshots in the
+        // single-buffer scheme were identical — this is semantically equivalent.
+        {
+            let mut enc = dev.create_command_encoder(&Default::default());
+            enc.copy_buffer_to_buffer(&self.c_fld, 0, &self.c_fld_prev, 0, c_bytes);
+            ctx.queue().submit([enc.finish()]);
         }
+
+        let mut done = 0u32;
+        while done < n_steps {
+            let batch = STEP_BATCH.min(n_steps - done);
+            let mut enc = dev.create_command_encoder(&Default::default());
+            for _ in 0..batch {
+                {
+                    let mut pass = enc.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&vel_pipeline);
+                    pass.set_bind_group(0, &vel_bg, &[]);
+                    pass.dispatch_workgroups(wg, 1, 1);
+                }
+                {
+                    let mut pass = enc.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&pos_pipeline);
+                    pass.set_bind_group(0, &pos_bg, &[]);
+                    pass.dispatch_workgroups(wg, 1, 1);
+                }
+            }
+            ctx.queue().submit([enc.finish()]);
+            dev.poll(wgpu::MaintainBase::Wait);
+            done += batch;
+        }
+
         // Update C = div(A) + (1/c²)·∂φ/∂t after all steps.
         {
-            let mut pass = enc.begin_compute_pass(&Default::default());
-            pass.set_pipeline(&cf_pipeline);
-            pass.set_bind_group(0, &cf_bg, &[]);
-            pass.dispatch_workgroups(wg, 1, 1);
+            let mut enc = dev.create_command_encoder(&Default::default());
+            {
+                let mut pass = enc.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&cf_pipeline);
+                pass.set_bind_group(0, &cf_bg, &[]);
+                pass.dispatch_workgroups(wg, 1, 1);
+            }
+            ctx.queue().submit([enc.finish()]);
+            dev.poll(wgpu::MaintainBase::Wait);
         }
-
-        ctx.queue().submit([enc.finish()]);
-        dev.poll(wgpu::MaintainBase::Wait);
 
         log::info!("FDTD: {n_steps} steps × dt={:.3e} s  (sim time {:.3e} s)",
             dt, n_steps as f32 * dt);
@@ -939,45 +957,58 @@ impl GpuGridState {
             })
         }).collect();
 
-        // Encode ALL n_steps into ONE command buffer — no per-step CPU round-trips.
-        // c_fld → c_fld_prev is snapshotted once at the start (c_fld is not updated
-        // during the loop, only by c_field_update at the end, so all per-step snapshots
-        // in the old code were identical — this is semantically equivalent).
-        let mut enc = dev.create_command_encoder(&Default::default());
-        enc.copy_buffer_to_buffer(&self.c_fld, 0, &self.c_fld_prev, 0, c_bytes);
-
-        for step in 0..n_steps as usize {
-            // Inject J source (time-varying amplitude).
-            {
-                let mut pass = enc.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&inj_pipeline);
-                pass.set_bind_group(0, &inj_bgs[step], &[]);
-                pass.dispatch_workgroups(wg, 1, 1);
-            }
-            // vel_step: update EM velocities.
-            {
-                let mut pass = enc.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&vel_pipeline);
-                pass.set_bind_group(0, &vel_bg, &[]);
-                pass.dispatch_workgroups(wg, 1, 1);
-            }
-            // pos_step: update EM positions.
-            {
-                let mut pass = enc.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&pos_pipeline);
-                pass.set_bind_group(0, &pos_bg, &[]);
-                pass.dispatch_workgroups(wg, 1, 1);
-            }
+        // Batched AC FDTD — same watchdog-safe strategy as run_fdtd_sponge.
+        // Snapshot c_fld → c_fld_prev once (all per-step copies were identical
+        // since c_fld is only updated by c_field_update after the full loop).
+        const STEP_BATCH_AC: usize = 32;
+        {
+            let mut enc = dev.create_command_encoder(&Default::default());
+            enc.copy_buffer_to_buffer(&self.c_fld, 0, &self.c_fld_prev, 0, c_bytes);
+            ctx.queue().submit([enc.finish()]);
         }
+
+        let total = n_steps as usize;
+        let mut done = 0usize;
+        while done < total {
+            let batch_end = (done + STEP_BATCH_AC).min(total);
+            let mut enc = dev.create_command_encoder(&Default::default());
+            for s in done..batch_end {
+                {
+                    let mut pass = enc.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&inj_pipeline);
+                    pass.set_bind_group(0, &inj_bgs[s], &[]);
+                    pass.dispatch_workgroups(wg, 1, 1);
+                }
+                {
+                    let mut pass = enc.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&vel_pipeline);
+                    pass.set_bind_group(0, &vel_bg, &[]);
+                    pass.dispatch_workgroups(wg, 1, 1);
+                }
+                {
+                    let mut pass = enc.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&pos_pipeline);
+                    pass.set_bind_group(0, &pos_bg, &[]);
+                    pass.dispatch_workgroups(wg, 1, 1);
+                }
+            }
+            ctx.queue().submit([enc.finish()]);
+            dev.poll(wgpu::MaintainBase::Wait);
+            done = batch_end;
+        }
+
         // Update C-field once after all steps.
         {
-            let mut pass = enc.begin_compute_pass(&Default::default());
-            pass.set_pipeline(&cf_pipeline);
-            pass.set_bind_group(0, &cf_bg, &[]);
-            pass.dispatch_workgroups(wg, 1, 1);
+            let mut enc = dev.create_command_encoder(&Default::default());
+            {
+                let mut pass = enc.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&cf_pipeline);
+                pass.set_bind_group(0, &cf_bg, &[]);
+                pass.dispatch_workgroups(wg, 1, 1);
+            }
+            ctx.queue().submit([enc.finish()]);
+            dev.poll(wgpu::MaintainBase::Wait);
         }
-        ctx.queue().submit([enc.finish()]);
-        dev.poll(wgpu::MaintainBase::Wait);
 
         log::info!(
             "AC FDTD: {n_steps} steps × dt={:.3e}s, f={:.2}Hz, I₀={:.3}A",
@@ -1082,24 +1113,30 @@ impl GpuGridState {
 
         let wg = (n1 * n1 * n1).div_ceil(256);
 
-        let mut enc = dev.create_command_encoder(&Default::default());
-        for _ in 0..n_steps {
-            {
-                let mut pass = enc.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&vel_pipeline);
-                pass.set_bind_group(0, &gem_bg, &[]);
-                pass.dispatch_workgroups(wg, 1, 1);
+        // Batched GEM FDTD — same 32-step batch strategy to avoid Metal timeout.
+        const STEP_BATCH_GEM: u32 = 32;
+        let mut done = 0u32;
+        while done < n_steps {
+            let batch = STEP_BATCH_GEM.min(n_steps - done);
+            let mut enc = dev.create_command_encoder(&Default::default());
+            for _ in 0..batch {
+                {
+                    let mut pass = enc.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&vel_pipeline);
+                    pass.set_bind_group(0, &gem_bg, &[]);
+                    pass.dispatch_workgroups(wg, 1, 1);
+                }
+                {
+                    let mut pass = enc.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&pos_pipeline);
+                    pass.set_bind_group(0, &gem_bg, &[]);
+                    pass.dispatch_workgroups(wg, 1, 1);
+                }
             }
-            {
-                let mut pass = enc.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&pos_pipeline);
-                pass.set_bind_group(0, &gem_bg, &[]);
-                pass.dispatch_workgroups(wg, 1, 1);
-            }
+            ctx.queue().submit([enc.finish()]);
+            dev.poll(wgpu::MaintainBase::Wait);
+            done += batch;
         }
-
-        ctx.queue().submit([enc.finish()]);
-        dev.poll(wgpu::MaintainBase::Wait);
 
         log::info!("GEM FDTD: {n_steps} steps, κ_G={:.3e}", kappa_g);
         Ok(())
