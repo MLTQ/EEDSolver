@@ -152,10 +152,11 @@ export function LegendPanel({ open, onToggle }: Props) {
               geometry. ∮ A·dl ≠ 0 through the hole even though B = 0 there.
             </ParamEntry>
             <ParamEntry param="Open helix">
-              Non-closed wire — current enters one tip and exits the other.
-              ∇·J ≠ 0 at the tips → charge accumulates → φ ≠ 0. The effect is
-              strongest with AC drive (frequency_hz {'>'} 0) where charge sloshes
-              back and forth, continuously sourcing C.
+              Non-closed wire driven by a voltage V₀ at the feed terminals (no
+              return path, so current cannot circulate). For AC drive, the
+              oscillating charge at the tips gives ∇·J ≠ 0ꜛ → φ ≠ 0 and C ≠ 0.
+              The peak feed current is I₀ = V₀ / 50 Ω. Effect is zero for DC
+              (no sustained current in an open circuit).
             </ParamEntry>
             <ParamEntry param="Capacitor — symmetric">
               Parallel-plate geometry. φ is initialised as a linear ramp between

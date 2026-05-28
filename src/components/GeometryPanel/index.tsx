@@ -115,9 +115,18 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
                 plate_aspect: t === "capacitor_asymmetric"
                                ? (entity.coil.plate_aspect ?? 5) : 1,
               });
+            } else if (t === "open_helix") {
+              // Open helix is voltage-driven (open circuit — no sustained current).
+              // Pre-fill a visible voltage; zero out current_A to avoid confusion.
+              setCoil({
+                coil_type: t,
+                voltage_v: entity.coil.voltage_v && entity.coil.voltage_v > 0
+                             ? entity.coil.voltage_v : 100,
+                current_A: 0,
+              });
             } else {
-              // Switching away from a capacitor zeroed current_A — restore a
-              // sensible default so AC injection isn't silently a no-op.
+              // Switching away from a capacitor or open helix zeroed current_A — restore
+              // a sensible default so AC injection isn't silently a no-op.
               const currentFix = entity.coil.current_A === 0 ? { current_A: 1.0 } : {};
               setCoil({ coil_type: t, ...currentFix });
             }
@@ -226,11 +235,21 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
               </>
             )}
 
-            {/* Current source (non-capacitor) */}
-            {!isCap && (
+            {/* Drive source — open helix is voltage-driven; closed loops use current */}
+            {!isCap && entity.coil.coil_type !== "open_helix" && (
               <Slider label="Current" unit="A" value={entity.coil.current_A}
                 min={0.1} max={1000} step={0.5}
                 onChange={v => setCoil({ current_A: v })} />
+            )}
+            {entity.coil.coil_type === "open_helix" && (
+              <Slider
+                label="Voltage V₀" unit="V"
+                value={entity.coil.voltage_v ?? 0}
+                min={0} max={10000} step={10}
+                fmt={v => v.toFixed(0)}
+                onChange={v => setCoil({ voltage_v: v })}
+                hint={`Open circuit — I₀ = V₀/50 Ω = ${((entity.coil.voltage_v ?? 0) / 50).toFixed(2)} A at feed`}
+              />
             )}
 
             {/* AC frequency (for current-carrying types) */}
@@ -391,9 +410,13 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
             {/* ── GEM config advisories ─────────────────────────────── */}
             {(() => {
               const isTimeDomain = request.solver.mode.mode === "time_domain";
-              const hasAcSource  = request.entities.some(
-                e => (e.coil.frequency_hz ?? 0) > 0 && e.coil.current_A !== 0
-              );
+              const hasAcSource  = request.entities.some(e => {
+                if ((e.coil.frequency_hz ?? 0) <= 0) return false;
+                // Open helix is voltage-driven; others use current_A.
+                return e.coil.coil_type === "open_helix"
+                  ? (e.coil.voltage_v ?? 0) > 0
+                  : e.coil.current_A > 0;
+              });
               const hasOpenSource = request.entities.some(
                 e => e.coil.coil_type === "open_helix" ||
                      e.coil.coil_type === "capacitor_symmetric" ||
@@ -413,7 +436,7 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
                 return (
                   <p className="text-[11px] text-amber-500/80 leading-relaxed">
                     ℹ Φ_g needs a C-field source: use AC open helix with γ {'>'} 0
-                    and non-zero current. Closed DC loops have C ≡ 0.
+                    and non-zero voltage. Closed DC loops have C ≡ 0.
                   </p>
                 );
               }

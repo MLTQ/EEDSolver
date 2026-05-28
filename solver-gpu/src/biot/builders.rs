@@ -18,10 +18,24 @@ use std::f64::consts::TAU;
 use crate::types::{CoilEntity, CoilType};
 use super::WireSegment;
 
+/// Reference impedance used to convert open-helix drive voltage → feed current.
+///
+/// An open helix is antenna-like: you drive it with a voltage V₀ at the feed
+/// terminals; the peak feed current is I₀ = V₀ / Z_REF.  50 Ω is the standard
+/// RF reference impedance and gives a reasonable first-order conversion without
+/// needing a full antenna impedance calculation.
+pub const OPEN_HELIX_Z_REF: f64 = 50.0;
+
 /// Convert one `CoilEntity` into a list of GPU-ready wire segments.
 pub fn entity_to_segments(entity: &CoilEntity) -> Vec<WireSegment> {
     let raw = build_path(entity);
-    let current = entity.coil.current_a as f32;
+
+    // For open helix: voltage-driven — derive peak feed current from V₀ / Z_ref.
+    // All other types: current_a is the directly specified loop current.
+    let current = match entity.coil.coil_type {
+        CoilType::OpenHelix => (entity.coil.voltage_v / OPEN_HELIX_Z_REF) as f32,
+        _                   => entity.coil.current_a as f32,
+    };
 
     // Apply rigid transform: rotate by quaternion, then translate.
     let pts: Vec<[f32; 3]> = raw.iter()

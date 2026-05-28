@@ -220,7 +220,14 @@ impl OracleSolver {
                 let ac_entity = request.entities.iter()
                     .find(|e| e.coil.frequency_hz > 0.0)
                     .unwrap(); // safe: has_ac guarantees at least one
-                let current_a    = ac_entity.coil.current_a as f32;
+
+                // Open helix is voltage-driven: derive peak feed current from V₀/Z_ref.
+                // All other types use current_a directly (it's a closed-loop current).
+                let current_a = match ac_entity.coil.coil_type {
+                    crate::types::CoilType::OpenHelix =>
+                        (ac_entity.coil.voltage_v / biot::OPEN_HELIX_Z_REF) as f32,
+                    _ => ac_entity.coil.current_a as f32,
+                };
                 let frequency_hz = ac_entity.coil.frequency_hz as f32;
                 gstate.run_fdtd_ac(
                     &self.ctx, &grid, dt, n_steps, gamma, None,
@@ -228,8 +235,8 @@ impl OracleSolver {
                 )?;
                 if current_a == 0.0 {
                     warnings.push(format!(
-                        "AC injection: f={:.2}Hz but Current = 0 A — no source injected. \
-                         Set Current > 0 in the geometry panel.",
+                        "AC injection: f={:.2}Hz but effective current = 0 A — no source injected. \
+                         Set Voltage > 0 V (open helix) or Current > 0 A in the geometry panel.",
                         frequency_hz
                     ));
                 } else {

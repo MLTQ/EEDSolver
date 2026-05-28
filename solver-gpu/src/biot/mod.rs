@@ -14,7 +14,7 @@
 use bytemuck::{Pod, Zeroable};
 
 mod builders;
-pub use builders::{entity_to_segments, entity_lead_points};
+pub use builders::{entity_to_segments, entity_lead_points, OPEN_HELIX_Z_REF};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WireSegment — GPU-ready (Pod, 32 bytes, matches WGSL struct layout)
