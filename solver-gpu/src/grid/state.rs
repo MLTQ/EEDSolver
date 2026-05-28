@@ -882,15 +882,26 @@ impl GpuGridState {
             usage: wgpu::BufferUsages::UNIFORM,
         });
 
-        // Inject params buffer — source_amp updated each step.
-        let inj_params_buf = dev.create_buffer(&wgpu::BufferDescriptor {
-            label:              Some("inj_params"),
-            size:               std::mem::size_of::<InjectParamsGpu>() as u64,
-            usage:              wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // ── Pre-compute per-step inject params (CPU side, no GPU round-trips) ───
+        // Each step gets its own immutable UNIFORM buffer initialised with the
+        // correct source_amp = −dt·μ₀c²·I₀·sin(ωt).  We then encode ALL n_steps
+        // into ONE command buffer and poll once — same pattern as run_fdtd_sponge.
+        let omega   = 2.0 * std::f32::consts::PI * frequency_hz;
+        let wg      = (n1 * n1 * n1).div_ceil(256);
+        let c_bytes = (self.scalar_len() * 4) as u64;
 
-        // Build bind groups.
+        let inj_bufs: Vec<wgpu::Buffer> = (0..n_steps).map(|step| {
+            let t = t_start_s + step as f32 * dt;
+            let amp = if frequency_hz > 0.0 { (omega * t).sin() } else { 1.0 };
+            let source_amp = -dt * MU0_C2 * current_a * amp;
+            dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label:    Some("inj_params_step"),
+                contents: bytes_of(&InjectParamsGpu { source_amp, n1, _pad: [0; 2] }),
+                usage:    wgpu::BufferUsages::UNIFORM,
+            })
+        }).collect();
+
+        // Build shared bind groups (EM and C-field passes; same every step).
         let em_bg = |layout: &wgpu::BindGroupLayout| {
             dev.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("fdtd_em_bg_ac"), layout,
@@ -916,42 +927,33 @@ impl GpuGridState {
             ],
         });
 
-        let inj_bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("inj_bg"), layout: &inj_pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.j_src.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: self.a_vel.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: inj_params_buf.as_entire_binding() },
-            ],
-        });
+        // Per-step inject bind groups (only the params buffer differs).
+        let inj_bgs: Vec<wgpu::BindGroup> = inj_bufs.iter().map(|buf| {
+            dev.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("inj_bg"), layout: &inj_pipeline.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: self.j_src.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: self.a_vel.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: buf.as_entire_binding() },
+                ],
+            })
+        }).collect();
 
-        let wg      = (n1 * n1 * n1).div_ceil(256);
-        let c_bytes = (self.scalar_len() * 4) as u64;
-        let omega   = 2.0 * std::f32::consts::PI * frequency_hz;
+        // Encode ALL n_steps into ONE command buffer — no per-step CPU round-trips.
+        // c_fld → c_fld_prev is snapshotted once at the start (c_fld is not updated
+        // during the loop, only by c_field_update at the end, so all per-step snapshots
+        // in the old code were identical — this is semantically equivalent).
+        let mut enc = dev.create_command_encoder(&Default::default());
+        enc.copy_buffer_to_buffer(&self.c_fld, 0, &self.c_fld_prev, 0, c_bytes);
 
-        // Step-by-step FDTD with per-step source amplitude update.
-        for step in 0..n_steps {
-            let t = t_start_s + step as f32 * dt;
-            let amplitude = if frequency_hz > 0.0 { (omega * t).sin() } else { 1.0 };
-
-            // source_amp = −dt · μ₀c² · I₀ · sin(ωt)
-            let source_amp = -dt * MU0_C2 * current_a * amplitude;
-            let inj_p = InjectParamsGpu { source_amp, n1, _pad: [0; 2] };
-            ctx.queue().write_buffer(&inj_params_buf, 0, bytes_of(&inj_p));
-
-            let mut enc = dev.create_command_encoder(&Default::default());
-
-            // Snapshot c_fld → c_fld_prev.
-            enc.copy_buffer_to_buffer(&self.c_fld, 0, &self.c_fld_prev, 0, c_bytes);
-
-            // Inject J source into a_vel.
+        for step in 0..n_steps as usize {
+            // Inject J source (time-varying amplitude).
             {
                 let mut pass = enc.begin_compute_pass(&Default::default());
                 pass.set_pipeline(&inj_pipeline);
-                pass.set_bind_group(0, &inj_bg, &[]);
+                pass.set_bind_group(0, &inj_bgs[step], &[]);
                 pass.dispatch_workgroups(wg, 1, 1);
             }
-
             // vel_step: update EM velocities.
             {
                 let mut pass = enc.begin_compute_pass(&Default::default());
@@ -959,7 +961,6 @@ impl GpuGridState {
                 pass.set_bind_group(0, &vel_bg, &[]);
                 pass.dispatch_workgroups(wg, 1, 1);
             }
-
             // pos_step: update EM positions.
             {
                 let mut pass = enc.begin_compute_pass(&Default::default());
@@ -967,22 +968,16 @@ impl GpuGridState {
                 pass.set_bind_group(0, &pos_bg, &[]);
                 pass.dispatch_workgroups(wg, 1, 1);
             }
-
-            ctx.queue().submit([enc.finish()]);
-            dev.poll(wgpu::MaintainBase::Wait);
         }
-
-        // Update C-field after all steps.
+        // Update C-field once after all steps.
         {
-            let mut enc = dev.create_command_encoder(&Default::default());
             let mut pass = enc.begin_compute_pass(&Default::default());
             pass.set_pipeline(&cf_pipeline);
             pass.set_bind_group(0, &cf_bg, &[]);
             pass.dispatch_workgroups(wg, 1, 1);
-            drop(pass);
-            ctx.queue().submit([enc.finish()]);
-            dev.poll(wgpu::MaintainBase::Wait);
         }
+        ctx.queue().submit([enc.finish()]);
+        dev.poll(wgpu::MaintainBase::Wait);
 
         log::info!(
             "AC FDTD: {n_steps} steps × dt={:.3e}s, f={:.2}Hz, I₀={:.3}A",

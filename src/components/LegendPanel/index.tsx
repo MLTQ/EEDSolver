@@ -121,9 +121,12 @@ export function LegendPanel({ open, onToggle }: Props) {
           <LegendSection title="GEM sector">
             <ParamEntry param="κ_g">
               Coupling constant linking the C field to the gravitomagnetic sector.
-              Two reference values: Kaluza-Klein theory ≈ 7.4×10⁻²⁸ (effectively
-              unmeasurable); Li-Torr experiment ≈ 1.14×10⁻¹¹ (anomalously large,
-              disputed). Set to 0 to disable GEM entirely.
+              Two physical reference values: Kaluza-Klein theory ≈ 7.4×10⁻²⁸
+              (unmeasurable); Li-Torr experiment ≈ 1.14×10⁻¹¹ (disputed).
+              Both give Φ_g amplitudes ~10⁻²⁰–10⁻²⁵ m²/s² — below any
+              colormap resolution. <em>To see GEM effects in the viewer, set
+              κ_g ≥ 1e-3 as an exploratory amplification.</em> Set to 0 to
+              disable GEM. Requires FDTD + AC open helix + γ {'>'} 0 to drive C ≠ 0.
             </ParamEntry>
             <ParamEntry param="Li-Torr mode">
               Models the Tajmar / Li-Torr result: a rotating superconductor generates

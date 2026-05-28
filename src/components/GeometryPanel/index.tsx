@@ -388,6 +388,45 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
         />
         {request.gem.enabled && (
           <>
+            {/* ── GEM config advisories ─────────────────────────────── */}
+            {(() => {
+              const isTimeDomain = request.solver.mode.mode === "time_domain";
+              const hasAcSource  = request.entities.some(
+                e => (e.coil.frequency_hz ?? 0) > 0 && e.coil.current_A !== 0
+              );
+              const hasOpenSource = request.entities.some(
+                e => e.coil.coil_type === "open_helix" ||
+                     e.coil.coil_type === "capacitor_symmetric" ||
+                     e.coil.coil_type === "capacitor_asymmetric"
+              );
+              const gammaOk = request.eed.gamma > 0;
+              const kappaSmall = request.gem.kappa_g > 0 && request.gem.kappa_g < 1e-6;
+
+              if (!isTimeDomain) {
+                return (
+                  <p className="text-[11px] text-amber-500/80 leading-relaxed">
+                    ⚠ GEM requires FDTD (time-domain) mode — enable it in the Mode section.
+                  </p>
+                );
+              }
+              if (!hasAcSource || !hasOpenSource || !gammaOk) {
+                return (
+                  <p className="text-[11px] text-amber-500/80 leading-relaxed">
+                    ℹ Φ_g needs a C-field source: use AC open helix with γ {'>'} 0
+                    and non-zero current. Closed DC loops have C ≡ 0.
+                  </p>
+                );
+              }
+              if (kappaSmall) {
+                return (
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    ℹ Physical κ_g gives Φ_g ≈ 10⁻²⁰ m²/s² — below colormap range.
+                    Use <strong className="text-slate-400">Exp</strong> preset (κ_g = 1) to see GEM effects.
+                  </p>
+                );
+              }
+              return null;
+            })()}
             <div className="flex flex-col gap-0.5">
               <div className="flex justify-between items-baseline">
                 <span className="text-xs text-slate-400">κ<sub>g</sub></span>
@@ -396,7 +435,7 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
                 </span>
               </div>
               <div className="text-xs text-slate-600 mb-1">
-                KK: 7.4×10⁻²⁸ · Li-Torr: 1.14×10⁻¹¹
+                KK: 7.4×10⁻²⁸ · Li-Torr: 1.14×10⁻¹¹ · Exp: amplified for viewing
               </div>
               <div className="flex gap-1">
                 {KAPPA_PRESETS.map(([label, val]) => (
@@ -440,6 +479,7 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
 const KAPPA_PRESETS: [string, number][] = [
   ["KK",   7.4e-28],
   ["L-T",  1.14e-11],
+  ["Exp",  1.0],        // amplified ×10¹¹ — exploratory / visualisation only
   ["off",  0.0],
 ];
 
