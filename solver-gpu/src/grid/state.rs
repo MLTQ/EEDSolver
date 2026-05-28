@@ -990,18 +990,6 @@ impl GpuGridState {
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/fdtd_gem.wgsl").into()),
         });
 
-        let vel_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("gem_vel"), layout: None, module: &gem_shader,
-            entry_point: "vel_gem",
-            compilation_options: Default::default(), cache: None,
-        });
-
-        let pos_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("gem_pos"), layout: None, module: &gem_shader,
-            entry_point: "pos_gem",
-            compilation_options: Default::default(), cache: None,
-        });
-
         let gem_params = GemParamsGpu { dx: grid.dx as f32, dt, n1, kappa_g };
         let gem_params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label:    Some("gem_params"),
@@ -1009,24 +997,69 @@ impl GpuGridState {
             usage:    wgpu::BufferUsages::UNIFORM,
         });
 
-        let mk_bg = |pipeline: &wgpu::ComputePipeline| {
-            dev.create_bind_group(&wgpu::BindGroupDescriptor {
-                label:   Some("gem_bg"),
-                layout:  &pipeline.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: self.phi_g.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: self.a_g_vec.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: self.phi_g_vel.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: self.a_g_vel.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: self.c_fld.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 5, resource: self.c_fld_prev.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 6, resource: gem_params_buf.as_entire_binding() },
-                ],
-            })
+        // Explicit bind group layout shared by both pipelines.
+        // wgpu auto-layout (layout: None) derives per-entry-point — pos_gem
+        // doesn't read c_fld/c_fld_prev so its auto-layout has only 5 slots,
+        // causing a mismatch when we supply all 7 entries.  An explicit shared
+        // layout avoids the discrepancy.
+        let storage_rw = wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false, min_binding_size: None,
         };
+        let storage_ro = wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false, min_binding_size: None,
+        };
+        let uniform = wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false, min_binding_size: None,
+        };
+        let cs = wgpu::ShaderStages::COMPUTE;
 
-        let vel_bg = mk_bg(&vel_pipeline);
-        let pos_bg = mk_bg(&pos_pipeline);
+        let bgl = dev.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("gem_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry { binding: 0, visibility: cs, ty: storage_rw, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 1, visibility: cs, ty: storage_rw, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 2, visibility: cs, ty: storage_rw, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 3, visibility: cs, ty: storage_rw, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 4, visibility: cs, ty: storage_ro, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 5, visibility: cs, ty: storage_ro, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 6, visibility: cs, ty: uniform,    count: None },
+            ],
+        });
+        let pipeline_layout = dev.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label:                Some("gem_pipeline_layout"),
+            bind_group_layouts:   &[&bgl],
+            push_constant_ranges: &[],
+        });
+
+        let vel_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("gem_vel"), layout: Some(&pipeline_layout), module: &gem_shader,
+            entry_point: "vel_gem",
+            compilation_options: Default::default(), cache: None,
+        });
+
+        let pos_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("gem_pos"), layout: Some(&pipeline_layout), module: &gem_shader,
+            entry_point: "pos_gem",
+            compilation_options: Default::default(), cache: None,
+        });
+
+        // Single bind group covers all 7 slots; shared by both pipelines.
+        let gem_bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+            label:   Some("gem_bg"),
+            layout:  &bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.phi_g.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.a_g_vec.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: self.phi_g_vel.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: self.a_g_vel.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: self.c_fld.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: self.c_fld_prev.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: gem_params_buf.as_entire_binding() },
+            ],
+        });
 
         let wg = (n1 * n1 * n1).div_ceil(256);
 
@@ -1035,13 +1068,13 @@ impl GpuGridState {
             {
                 let mut pass = enc.begin_compute_pass(&Default::default());
                 pass.set_pipeline(&vel_pipeline);
-                pass.set_bind_group(0, &vel_bg, &[]);
+                pass.set_bind_group(0, &gem_bg, &[]);
                 pass.dispatch_workgroups(wg, 1, 1);
             }
             {
                 let mut pass = enc.begin_compute_pass(&Default::default());
                 pass.set_pipeline(&pos_pipeline);
-                pass.set_bind_group(0, &pos_bg, &[]);
+                pass.set_bind_group(0, &gem_bg, &[]);
                 pass.dispatch_workgroups(wg, 1, 1);
             }
         }
