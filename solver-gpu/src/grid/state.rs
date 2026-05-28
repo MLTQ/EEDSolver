@@ -1230,11 +1230,11 @@ impl GpuGridState {
         {
             let rb = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("cg_r0"), contents: bytemuck::cast_slice(&r0),
-                usage: wgpu::BufferUsages::STORAGE,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             });
             let pb = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("cg_p0"), contents: bytemuck::cast_slice(&p0),
-                usage: wgpu::BufferUsages::STORAGE,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             });
             let mut enc = dev.create_command_encoder(&Default::default());
             enc.copy_buffer_to_buffer(&rb, 0, &r_buf, 0, bytes);
