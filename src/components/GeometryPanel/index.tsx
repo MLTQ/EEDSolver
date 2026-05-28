@@ -1,12 +1,11 @@
 import React, { useState } from "react";
 import type {
   CoilEntity, CoilParams, CoilType,
-  EedParams, FieldName, GemParams, HolonomyPath,
+  EedParams, GemParams, HolonomyPath,
   SolveRequest, SolverConfig, SolverMode,
 } from "../../lib/fieldTypes";
 import {
   AC_CAPABLE_TYPES, CAPACITOR_TYPES, COIL_LABELS,
-  FIELD_CHIP, PHASE1_FIELDS,
   defaultCapacitorEntity,
 } from "../../lib/fieldTypes";
 
@@ -267,23 +266,6 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
           checked={request.request_volume}
           onChange={v => set({ request_volume: v })}
         />
-        {request.request_volume && (
-          <div className="flex items-center gap-1 flex-wrap pl-0.5">
-            {PHASE1_FIELDS.map(f => (
-              <button
-                key={f}
-                onClick={() => set({ volume_field: f as FieldName })}
-                className={`text-xs px-2 py-0.5 rounded transition-colors border ${
-                  request.volume_field === f
-                    ? "bg-accent/20 text-accent border-accent/40"
-                    : "text-slate-500 border-rim hover:text-slate-300 hover:border-white/20"
-                }`}
-              >
-                {FIELD_CHIP[f as FieldName] ?? f}
-              </button>
-            ))}
-          </div>
-        )}
       </Section>
 
       {/* ── Solver mode ───────────────────────────────────────────────── */}

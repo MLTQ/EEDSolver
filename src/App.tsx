@@ -4,6 +4,7 @@ import type { FieldName, SolveRequest, SolveResult, SolverStatus } from "./lib/f
 import { defaultSolveRequest, FIELD_CHIP, FIELD_UNITS, PHASE1_FIELDS } from "./lib/fieldTypes";
 import { FIELD_CHIP_COLOR, DEFAULT_CHIP_COLOR } from "./lib/colormap";
 import { GeometryPanel } from "./components/GeometryPanel";
+import { LegendPanel }   from "./components/LegendPanel";
 import { SliceViewer }   from "./components/SliceViewer";
 import { VolumeViewer }  from "./components/VolumeViewer";
 import { HypothesisLog } from "./components/HypothesisLog";
@@ -22,6 +23,7 @@ export default function App() {
   const [hypRefresh,    setHypRefresh]    = useState(0);
   const [error,         setError]         = useState<string | null>(null);
   const [showHistory,   setShowHistory]   = useState(false);
+  const [showLegend,    setShowLegend]    = useState(false);
 
   const isSolvingRef = useRef(false);
 
@@ -244,6 +246,9 @@ export default function App() {
             </div>
           )}
         </div>
+
+        {/* ── Legend sidebar ───────────────────────────────────────────── */}
+        <LegendPanel open={showLegend} onToggle={() => setShowLegend(v => !v)} />
       </div>
 
       {/* ── Save modal ─────────────────────────────────────────────────── */}
