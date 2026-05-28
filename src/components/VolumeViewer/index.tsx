@@ -142,32 +142,9 @@ function buildCoilPath(p: CoilParams): Pt3[] {
     case "flat_spiral":      return flatSpiralPath(p);
     case "rodin":            return rodinPath(p);
     case "capacitor_symmetric":
-    case "capacitor_asymmetric": return capacitorPath(p);
+    case "capacitor_asymmetric": return []; // handled by buildCapacitorGroup, not path+tube
     default:                 return [];
   }
-}
-
-/** Two circular discs (plate outlines) for capacitor visualisation. */
-function capacitorPath(p: CoilParams): Pt3[] {
-  const R    = p.radius_m;
-  const gap  = (p.plate_gap_m ?? 0) > 0 ? (p.plate_gap_m ?? 0.02) : 0.02;
-  const S    = 48;
-  const pts: Pt3[] = [];
-  // Top plate at z = +gap/2
-  for (let i = 0; i <= S; i++) {
-    const theta = (2 * Math.PI * i) / S;
-    pts.push([R * Math.cos(theta), R * Math.sin(theta), gap / 2]);
-  }
-  pts.push([NaN, NaN, NaN]);
-  // Small electrode at z = -gap/2 (for asymmetric, radius = R/aspect)
-  const r2 = p.coil_type === "capacitor_asymmetric"
-    ? R / Math.max(p.plate_aspect ?? 5, 1)
-    : R;
-  for (let i = 0; i <= S; i++) {
-    const theta = (2 * Math.PI * i) / S;
-    pts.push([r2 * Math.cos(theta), r2 * Math.sin(theta), -gap / 2]);
-  }
-  return pts;
 }
 
 /** Continuous helix. */
@@ -276,12 +253,26 @@ function rodinPath(p: CoilParams): Pt3[] {
  * Build Three.js coil objects from physical path points.
  * Splits path at NaN gaps so disconnected loops render correctly.
  * Returns a Group of tubes.
+ *
+ * Capacitor types are handled specially: solid CircleGeometry discs are used
+ * instead of ring outlines so the plates look like actual plates.
  */
 function buildCoilGroup(
   coilParams: CoilParams,
   maxS: number,       // physical normalizer: world = physical / maxS
   tubeFraction: number = 0.006,  // tube radius as fraction of world box
 ): THREE.Group {
+  const group = new THREE.Group();
+
+  // Capacitor types: render as solid metallic discs with an edge rim
+  if (
+    coilParams.coil_type === "capacitor_symmetric" ||
+    coilParams.coil_type === "capacitor_asymmetric"
+  ) {
+    buildCapacitorGroup(coilParams, maxS, group);
+    return group;
+  }
+
   const raw = buildCoilPath(coilParams);
   const scale = 1 / maxS;
   const tubeR = tubeFraction;
@@ -307,7 +298,6 @@ function buildCoilGroup(
     metalness: 0.2,
   });
 
-  const group = new THREE.Group();
   for (const seg of segments) {
     if (seg.length < 2) continue;
     const curve = new THREE.CatmullRomCurve3(seg, false, "catmullrom", 0.5);
@@ -323,6 +313,87 @@ function buildCoilGroup(
     }
   }
   return group;
+}
+
+/**
+ * Render capacitor plates as solid metallic discs (CircleGeometry).
+ * Anode (top, +gap/2): full radius.
+ * Cathode (bottom, −gap/2): full radius for symmetric; R/aspect for asymmetric.
+ * A thin edge rim tube is added for visual definition.
+ */
+function buildCapacitorGroup(p: CoilParams, maxS: number, group: THREE.Group) {
+  const R    = p.radius_m;
+  const gap  = (p.plate_gap_m ?? 0) > 0 ? (p.plate_gap_m ?? 0.02) : 0.02;
+  const scale = 1 / maxS;
+
+  const r2 = p.coil_type === "capacitor_asymmetric"
+    ? R / Math.max(p.plate_aspect ?? 5, 1)
+    : R;
+
+  // Semi-transparent metallic plate material
+  const plateMat = new THREE.MeshStandardMaterial({
+    color:             0xd4a040,
+    emissive:          0xb06010,
+    emissiveIntensity: 0.35,
+    roughness:         0.25,
+    metalness:         0.85,
+    transparent:       true,
+    opacity:           0.82,
+    side:              THREE.DoubleSide,
+  });
+
+  // Brighter rim tube material
+  const rimMat = new THREE.MeshStandardMaterial({
+    color:             0xff8c00,
+    emissive:          0xff6600,
+    emissiveIntensity: 0.7,
+    roughness:         0.3,
+    metalness:         0.3,
+  });
+
+  const SEGS    = 64;
+  const TUBE_R  = 0.006;
+
+  // ── Top plate (anode) ──────────────────────────────────────────────────────
+  const zTop = (gap / 2) * scale;
+  const disc1 = new THREE.Mesh(new THREE.CircleGeometry(R * scale, SEGS), plateMat);
+  disc1.position.z = zTop;
+  group.add(disc1);
+
+  // Edge rim
+  const rimPts1 = Array.from({ length: SEGS + 1 }, (_, i) => {
+    const th = (2 * Math.PI * i) / SEGS;
+    return new THREE.Vector3(R * scale * Math.cos(th), R * scale * Math.sin(th), zTop);
+  });
+  const rimCurve1 = new THREE.CatmullRomCurve3(rimPts1, true);
+  group.add(new THREE.Mesh(new THREE.TubeGeometry(rimCurve1, SEGS, TUBE_R, 6, true), rimMat));
+
+  // ── Bottom plate (cathode) ─────────────────────────────────────────────────
+  const zBot = -(gap / 2) * scale;
+  const disc2 = new THREE.Mesh(new THREE.CircleGeometry(r2 * scale, SEGS), plateMat);
+  disc2.position.z = zBot;
+  group.add(disc2);
+
+  // Edge rim
+  const rimPts2 = Array.from({ length: SEGS + 1 }, (_, i) => {
+    const th = (2 * Math.PI * i) / SEGS;
+    return new THREE.Vector3(r2 * scale * Math.cos(th), r2 * scale * Math.sin(th), zBot);
+  });
+  const rimCurve2 = new THREE.CatmullRomCurve3(rimPts2, true);
+  group.add(new THREE.Mesh(new THREE.TubeGeometry(rimCurve2, SEGS, TUBE_R, 6, true), rimMat));
+
+  // ── Connecting rod between plate centres ───────────────────────────────────
+  // Visual anchor so the gap is legible even when the field fog is dense
+  const rodPts = [
+    new THREE.Vector3(0, 0, zBot),
+    new THREE.Vector3(0, 0, zTop),
+  ];
+  const rodCurve = new THREE.CatmullRomCurve3(rodPts, false);
+  const rodMat = new THREE.MeshStandardMaterial({
+    color: 0x888888, emissive: 0x444444, emissiveIntensity: 0.3,
+    roughness: 0.6, metalness: 0.8, transparent: true, opacity: 0.5,
+  });
+  group.add(new THREE.Mesh(new THREE.TubeGeometry(rodCurve, 4, TUBE_R * 0.5, 6, false), rodMat));
 }
 
 // ---------------------------------------------------------------------------
