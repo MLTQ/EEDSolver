@@ -199,13 +199,26 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
                   min={0.005} max={0.2} step={0.005}
                   onChange={v => setCoil({ plate_gap_m: v })}
                 />
-                {isAsym && (
-                  <Slider label="Asymmetry" unit="×" value={entity.coil.plate_aspect ?? 5}
-                    min={1} max={20} step={0.5} fmt={v => v.toFixed(1)}
-                    onChange={v => setCoil({ plate_aspect: v })}
-                    hint="Large/small electrode radius ratio"
-                  />
-                )}
+                {isAsym && (() => {
+                  const aspect  = entity.coil.plate_aspect ?? 5;
+                  const smallR  = entity.coil.radius_m / Math.max(aspect, 1);
+                  const gap     = entity.coil.plate_gap_m ?? 0.02;
+                  // Valid TTB physics requires small_r ≪ gap. The point-charge
+                  // model degrades when small_r approaches gap.
+                  const minValidAspect = entity.coil.radius_m / (gap * 0.3);
+                  const isNonPhysical  = smallR >= gap * 0.5;
+                  return (
+                    <>
+                      <Slider label="Asymmetry" unit="×" value={aspect}
+                        min={1} max={20} step={0.5} fmt={v => v.toFixed(1)}
+                        onChange={v => setCoil({ plate_aspect: v })}
+                        hint={isNonPhysical
+                          ? `⚠ small electrode (${(smallR*100).toFixed(1)} cm) ≥ gap/2 — try aspect > ${minValidAspect.toFixed(1)}×`
+                          : "Large/small electrode radius ratio"}
+                      />
+                    </>
+                  );
+                })()}
                 <Slider label="Voltage V" unit="V" value={entity.coil.voltage_v ?? 0}
                   min={0} max={50000} step={100}
                   onChange={v => setCoil({ voltage_v: v })}

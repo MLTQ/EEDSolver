@@ -552,9 +552,31 @@ impl GpuGridState {
 
                 // Coulomb constant k = 1/(4πε₀) ≈ 8.988e9 V·m/C
                 const K_COULOMB: f64 = 8.9875e9;
-                // Charge needed: V ≈ k·Q/small_r − k·Q/gap → Q = V / (k·(1/small_r − 1/gap))
-                let denom = K_COULOMB * (1.0 / small_r - 1.0 / gap);
-                let q_eff = if denom.abs() > 1e-30 { v / denom } else { 0.0 };
+
+                // Reference the *outer* faces of the electrodes so the denominator
+                // is always positive regardless of small_r vs gap.
+                //
+                // Old formula: V ≈ K·Q/small_r − K·Q/gap
+                //   → denominator = K·(1/small_r − 1/gap)
+                //   → crosses zero and sign-flips when small_r ≥ gap (non-physical
+                //      but reachable via the UI when aspect ratio is low).
+                //
+                // New formula: evaluate at the outward-facing electrode surfaces:
+                //   V = φ(outer anode) − φ(outer cathode)
+                //     = K·Q·[1/small_r − 1/(gap+small_r)]
+                //     − K·Q·[1/(gap+large_r) − 1/large_r]
+                //     = K·Q·(1/small_r + 1/large_r − 1/(gap+small_r) − 1/(gap+large_r))
+                //
+                // Each bracket 1/x − 1/(x+gap) > 0 always, so denom > 0 for all V > 0.
+                // In the limit small_r ≪ gap ≪ large_r this reduces to K·Q/small_r ≈ V
+                // (isolated sphere), recovering the correct Townsend-Brown limit.
+                let denom = K_COULOMB * (
+                    1.0 / small_r
+                    + 1.0 / large_r
+                    - 1.0 / (gap + small_r)
+                    - 1.0 / (gap + large_r)
+                );
+                let q_eff = if denom > 1e-30 { v / denom } else { 0.0 };
 
                 let anode_z   =  half_gap + pos[2];
                 let cathode_z = -half_gap + pos[2];
@@ -567,8 +589,10 @@ impl GpuGridState {
                             let x = -r + ix as f64 * dx - pos[0];
                             let d_anode2   = x*x + y*y + (z - anode_z)*(z - anode_z);
                             let d_cathode2 = x*x + y*y + (z - cathode_z)*(z - cathode_z);
+                            // Clamp to electrode surface radii — anode at small_r, cathode at large_r.
+                            // (Previous code used large_r * 0.5 for the cathode, which was inconsistent.)
                             let da = d_anode2.sqrt().max(small_r);
-                            let dc = d_cathode2.sqrt().max(large_r * 0.5);
+                            let dc = d_cathode2.sqrt().max(large_r);
                             let phi_val = K_COULOMB * q_eff * (1.0 / da - 1.0 / dc);
                             phi_data[ix + iy * n1 + iz * n1 * n1] = phi_val as f32;
                         }
