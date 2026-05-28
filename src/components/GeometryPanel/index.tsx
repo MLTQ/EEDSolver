@@ -116,7 +116,10 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
                                ? (entity.coil.plate_aspect ?? 5) : 1,
               });
             } else {
-              setCoil({ coil_type: t });
+              // Switching away from a capacitor zeroed current_A — restore a
+              // sensible default so AC injection isn't silently a no-op.
+              const currentFix = entity.coil.current_A === 0 ? { current_A: 1.0 } : {};
+              setCoil({ coil_type: t, ...currentFix });
             }
           }}
         >

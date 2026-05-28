@@ -226,10 +226,18 @@ impl OracleSolver {
                     &self.ctx, &grid, dt, n_steps, gamma, None,
                     current_a, frequency_hz, 0.0,
                 )?;
-                warnings.push(format!(
-                    "AC injection: f={:.2}Hz, I₀={:.3}A over {n_steps} steps",
-                    frequency_hz, current_a
-                ));
+                if current_a == 0.0 {
+                    warnings.push(format!(
+                        "AC injection: f={:.2}Hz but Current = 0 A — no source injected. \
+                         Set Current > 0 in the geometry panel.",
+                        frequency_hz
+                    ));
+                } else {
+                    warnings.push(format!(
+                        "AC injection: f={:.2}Hz, I₀={:.3}A over {n_steps} steps",
+                        frequency_hz, current_a
+                    ));
+                }
             } else {
                 gstate.run_fdtd(&self.ctx, &grid, dt, n_steps, gamma)?;
             }
