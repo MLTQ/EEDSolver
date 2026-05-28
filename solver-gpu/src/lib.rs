@@ -264,20 +264,67 @@ impl OracleSolver {
         }
 
         // ── Phase 4: GEM gravitational sector ────────────────────────────────
-        if request.gem.enabled && request.gem.kappa_g != 0.0 {
-            if let SolverMode::TimeDomain { dt_s, n_steps } = cfg.mode {
-                let cfl_max = grid.cfl_dt() as f32;
-                // Same auto-CFL rule as the EM FDTD: dt_s==0 → use CFL limit.
-                let dt = if dt_s == 0.0 { cfl_max }
-                         else { (dt_s as f32).min(cfl_max) };
-                let kappa   = request.gem.kappa_g as f32;
-                gstate.run_gem_fdtd(&self.ctx, &grid, dt, n_steps, kappa)?;
-                log::info!("GEM: κ_G={:.3e}", kappa);
-            } else {
-                warnings.push(
-                    "GEM sector requires time-domain mode (FDTD). Enable it in the Mode section.".into()
-                );
+        if request.gem.enabled {
+            // κ_G time-domain coupling (existing path).  Pure derivative coupling
+            // — known to be blind to static configurations (see ORC-jlu epic).
+            if request.gem.kappa_g != 0.0 {
+                if let SolverMode::TimeDomain { dt_s, n_steps } = cfg.mode {
+                    let cfl_max = grid.cfl_dt() as f32;
+                    // Same auto-CFL rule as the EM FDTD: dt_s==0 → use CFL limit.
+                    let dt = if dt_s == 0.0 { cfl_max }
+                             else { (dt_s as f32).min(cfl_max) };
+                    let kappa = request.gem.kappa_g as f32;
+                    gstate.run_gem_fdtd(&self.ctx, &grid, dt, n_steps, kappa)?;
+                    log::info!("GEM: κ_G={:.3e}", kappa);
+                } else {
+                    warnings.push(
+                        "GEM κ_G coupling requires time-domain mode. Enable it in the Mode section.".into()
+                    );
+                }
             }
+
+            // Li-Torr gravitomagnetic London moment (Wilhelm 2026 Eq. 23).
+            // For every superconducting entity rotating at ω ≠ 0, directly impose
+            // A_g = −(m_e/e)·ω×(r−r_c) inside its volume — giving uniform
+            // B_g = −(2·m_e/e)·ω there.  Works in BOTH static and time-domain modes.
+            if request.gem.li_torr_mode {
+                let li_torr_ents: Vec<grid::state::LiTorrEntityGpu> = request.entities.iter()
+                    .filter(|e| e.superconducting
+                        && (e.angular_velocity_rad_s[0].abs()
+                          + e.angular_velocity_rad_s[1].abs()
+                          + e.angular_velocity_rad_s[2].abs()) > 0.0)
+                    .map(|e| grid::state::LiTorrEntityGpu {
+                        center_radius: [
+                            e.position_m[0] as f32,
+                            e.position_m[1] as f32,
+                            e.position_m[2] as f32,
+                            e.coil.radius_m  as f32,
+                        ],
+                        omega_pad: [
+                            e.angular_velocity_rad_s[0] as f32,
+                            e.angular_velocity_rad_s[1] as f32,
+                            e.angular_velocity_rad_s[2] as f32,
+                            0.0,
+                        ],
+                    })
+                    .collect();
+
+                if li_torr_ents.is_empty() {
+                    warnings.push(
+                        "GEM Li-Torr mode is on but no entity has `superconducting=true` with non-zero angular_velocity_rad_s.".into()
+                    );
+                } else {
+                    gstate.run_li_torr_source(&self.ctx, &grid, &li_torr_ents)?;
+                    log::info!(
+                        "Li-Torr: {} SC entit{} contributing",
+                        li_torr_ents.len(),
+                        if li_torr_ents.len() == 1 { "y" } else { "ies" },
+                    );
+                }
+            }
+
+            // Derive B_g = ∇×A_g for display whenever GEM machinery ran.
+            gstate.run_derive_gem_fields(&self.ctx, &grid)?;
         }
 
         // ── Post-processing ──────────────────────────────────────────────────
@@ -303,6 +350,7 @@ impl OracleSolver {
                    | FieldName::CField
                    | FieldName::Phi
                    | FieldName::PhiG
+                   | FieldName::BgMagnitude
                    | FieldName::PoyntingMag
                    | FieldName::EnergyDensity) => f.clone(),
                 _ => {

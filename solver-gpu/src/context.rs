@@ -33,16 +33,18 @@ use crate::error::SolverError;
 /// every solve — `create_compute_pipeline` from a pre-compiled module avoids
 /// re-running the naga WGSL→MSL translation.
 pub struct ShaderCache {
-    pub biot:        ShaderModule,
-    pub derive:      ShaderModule,
-    pub fdtd_em:     ShaderModule,
-    pub c_field:     ShaderModule,
-    pub inject_j:    ShaderModule,
-    pub fdtd_gem:    ShaderModule,
-    pub jacobi:      ShaderModule,
-    pub cg_scalar:   ShaderModule,
-    pub observables: ShaderModule,
-    pub jacobi_a:    ShaderModule,
+    pub biot:            ShaderModule,
+    pub derive:          ShaderModule,
+    pub derive_gem:      ShaderModule,
+    pub fdtd_em:         ShaderModule,
+    pub c_field:         ShaderModule,
+    pub inject_j:        ShaderModule,
+    pub fdtd_gem:        ShaderModule,
+    pub li_torr_source:  ShaderModule,
+    pub jacobi:          ShaderModule,
+    pub cg_scalar:       ShaderModule,
+    pub observables:     ShaderModule,
+    pub jacobi_a:        ShaderModule,
 }
 
 impl ShaderCache {
@@ -56,16 +58,18 @@ impl ShaderCache {
         log::info!("Compiling GPU shaders…");
         let t0 = std::time::Instant::now();
         let cache = Self {
-            biot:        mk("biot",        include_str!("shaders/biot.wgsl")),
-            derive:      mk("derive",      include_str!("shaders/derive.wgsl")),
-            fdtd_em:     mk("fdtd_em",     include_str!("shaders/fdtd_em.wgsl")),
-            c_field:     mk("c_field",     include_str!("shaders/c_field.wgsl")),
-            inject_j:    mk("inject_j",    include_str!("shaders/inject_j.wgsl")),
-            fdtd_gem:    mk("fdtd_gem",    include_str!("shaders/fdtd_gem.wgsl")),
-            jacobi:      mk("jacobi",      include_str!("shaders/jacobi.wgsl")),
-            cg_scalar:   mk("cg_scalar",   include_str!("shaders/cg_scalar.wgsl")),
-            observables: mk("observables", include_str!("shaders/observables.wgsl")),
-            jacobi_a:    mk("jacobi_a",    include_str!("shaders/jacobi_a.wgsl")),
+            biot:           mk("biot",           include_str!("shaders/biot.wgsl")),
+            derive:         mk("derive",         include_str!("shaders/derive.wgsl")),
+            derive_gem:     mk("derive_gem",     include_str!("shaders/derive_gem.wgsl")),
+            fdtd_em:        mk("fdtd_em",        include_str!("shaders/fdtd_em.wgsl")),
+            c_field:        mk("c_field",        include_str!("shaders/c_field.wgsl")),
+            inject_j:       mk("inject_j",       include_str!("shaders/inject_j.wgsl")),
+            fdtd_gem:       mk("fdtd_gem",       include_str!("shaders/fdtd_gem.wgsl")),
+            li_torr_source: mk("li_torr_source", include_str!("shaders/li_torr_source.wgsl")),
+            jacobi:         mk("jacobi",         include_str!("shaders/jacobi.wgsl")),
+            cg_scalar:      mk("cg_scalar",      include_str!("shaders/cg_scalar.wgsl")),
+            observables:    mk("observables",    include_str!("shaders/observables.wgsl")),
+            jacobi_a:       mk("jacobi_a",       include_str!("shaders/jacobi_a.wgsl")),
         };
         log::info!("Shader compilation done in {:.2}s", t0.elapsed().as_secs_f64());
         cache

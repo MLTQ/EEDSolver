@@ -75,6 +75,7 @@ async fn test_toroid_ab_effect() {
         position_m:    [0.0, 0.0, 0.0],
         orientation:   [0.0, 0.0, 0.0, 1.0],
         superconducting: false,
+        angular_velocity_rad_s: [0.0; 3],
     };
 
     // ── Grid: 64³ in a 15 cm box ─────────────────────────────────────────────

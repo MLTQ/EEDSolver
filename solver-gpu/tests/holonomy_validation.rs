@@ -62,6 +62,7 @@ async fn test_holonomy_solenoid() {
         position_m:    [0.0, 0.0, 0.0],
         orientation:   [0.0, 0.0, 0.0, 1.0],
         superconducting: false,
+        angular_velocity_rad_s: [0.0; 3],
     };
 
     // ── Grid ─────────────────────────────────────────────────────────────────

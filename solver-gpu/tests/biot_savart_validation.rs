@@ -65,6 +65,7 @@ async fn test_biot_savart_solenoid_on_axis() {
         position_m:    [0.0, 0.0, 0.0],
         orientation:   [0.0, 0.0, 0.0, 1.0],
         superconducting: false,
+        angular_velocity_rad_s: [0.0; 3],
     };
 
     // ── Grid parameters ─────────────────────────────────────────────────────

@@ -71,6 +71,10 @@ export interface CoilEntity {
   orientation:     [number, number, number, number];
   /** Superconducting body for Li-Torr GEM coupling. */
   superconducting: boolean;
+  /** Angular velocity of the (superconducting) body [rad/s], [ωx, ωy, ωz].
+   *  Sources B_g = −(2·m_e/e)·ω inside the entity volume when both
+   *  `superconducting=true` and `gem.li_torr_mode=true`.  Default [0,0,0]. */
+  angular_velocity_rad_s?: [number, number, number];
 }
 
 /** EED coupling constants (Stueckelberg Lagrangian). */

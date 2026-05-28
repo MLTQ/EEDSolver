@@ -52,6 +52,7 @@ pub fn compute_maxima(
     let c_data       = gstate.readback(ctx, &gstate.c_fld,       gstate.scalar_len())?;
     let phi_data     = gstate.readback(ctx, &gstate.phi,         gstate.scalar_len())?;
     let phi_g_data   = gstate.readback(ctx, &gstate.phi_g,       gstate.scalar_len())?;
+    let b_g_data     = gstate.readback(ctx, &gstate.b_g_vec,     gstate.vec_len())?;
     let pmag_data    = gstate.readback(ctx, &gstate.poynting_mag, gstate.scalar_len())?;
     let udens_data   = gstate.readback(ctx, &gstate.energy_dens,  gstate.scalar_len())?;
 
@@ -116,6 +117,15 @@ pub fn compute_maxima(
         });
     }
 
+    let (b_g_max, b_g_idx) = vec_max(&b_g_data);
+    if b_g_max > 0.0 {
+        maxima.push(FieldMaximum {
+            field:        FieldName::BgMagnitude,
+            max_value:    b_g_max as f64,
+            max_location: index_to_world(b_g_idx, n1, dx, r),
+        });
+    }
+
     let (pmag_max, pmag_idx) = scalar_max(&pmag_data);
     if pmag_max > 0.0 {
         maxima.push(FieldMaximum {
@@ -169,6 +179,10 @@ pub fn extract_volume(
         }
         FieldName::PhiG => {
             gstate.readback(ctx, &gstate.phi_g, total)?
+        }
+        FieldName::BgMagnitude => {
+            let bg = gstate.readback(ctx, &gstate.b_g_vec, gstate.vec_len())?;
+            bg.chunks_exact(4).map(|c| (c[0]*c[0]+c[1]*c[1]+c[2]*c[2]).sqrt()).collect()
         }
         FieldName::PoyntingMag => {
             gstate.readback(ctx, &gstate.poynting_mag, total)?
@@ -315,6 +329,10 @@ fn extract_slice(
         FieldName::PhiG => {
             let pg = gstate.readback(ctx, &gstate.phi_g, gstate.scalar_len())?;
             slice_scalar(&pg, n1, req.axis, layer)
+        }
+        FieldName::BgMagnitude => {
+            let bg = gstate.readback(ctx, &gstate.b_g_vec, gstate.vec_len())?;
+            slice_magnitude(&bg, n1, req.axis, layer)
         }
         FieldName::PoyntingMag => {
             let pm = gstate.readback(ctx, &gstate.poynting_mag, gstate.scalar_len())?;

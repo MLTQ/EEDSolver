@@ -53,6 +53,12 @@ pub struct CoilEntity {
     /// If true, this entity is treated as a superconducting body for the
     /// Li-Torr gravitomagnetic London moment coupling (GEM sector).
     pub superconducting: bool,
+    /// Angular velocity of the (superconducting) body [rad/s], [ωx, ωy, ωz].
+    /// Used only when `superconducting=true` and GEM Li-Torr mode is on:
+    /// the Cooper-pair condensate sources B_g = −(2·m_e/e)·ω inside the
+    /// entity's volume (radius = `coil.radius_m`).  Default = zero.
+    #[serde(default)]
+    pub angular_velocity_rad_s: [f64; 3],
 }
 
 impl Default for CoilEntity {
@@ -62,6 +68,7 @@ impl Default for CoilEntity {
             position_m:    [0.0, 0.0, 0.0],
             orientation:   [0.0, 0.0, 0.0, 1.0],
             superconducting: false,
+            angular_velocity_rad_s: [0.0, 0.0, 0.0],
         }
     }
 }

@@ -129,6 +129,18 @@ pub struct InjectParamsGpu {
     pub _pad:       [u32; 2],
 }
 
+/// One superconducting entity for the Li-Torr GEM source kernel.
+/// Must match `LiTorrEntity` in `li_torr_source.wgsl`.
+/// Packed as 2 × vec4 (32 bytes) to dodge WGSL's vec3 alignment padding.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct LiTorrEntityGpu {
+    /// (center.x, center.y, center.z, body_radius_m)
+    pub center_radius: [f32; 4],
+    /// (omega.x, omega.y, omega.z, 0)
+    pub omega_pad:     [f32; 4],
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GpuGridState
 // ─────────────────────────────────────────────────────────────────────────────
@@ -155,6 +167,7 @@ pub struct InjectParamsGpu {
 /// - `a_g_vec`:    4 × f32  — [Agx, Agy, Agz, 0] [m/s]
 /// - `phi_g_vel`:  1 × f32  — ∂Φ_g/∂t
 /// - `a_g_vel`:    4 × f32  — ∂A_g/∂t
+/// - `b_g_vec`:    4 × f32  — [Bgx, Bgy, Bgz, 0] [1/s] (derived from A_g)
 ///
 /// Phase 5 observables (EED energy/momentum):
 /// - `poynting_mag`: 1 × f32 — |P| = |E×B − C·E|  [W/m² in effective units]
@@ -176,6 +189,7 @@ pub struct GpuGridState {
     pub a_g_vec:     wgpu::Buffer,
     pub phi_g_vel:   wgpu::Buffer,
     pub a_g_vel:     wgpu::Buffer,
+    pub b_g_vec:     wgpu::Buffer,
     // Phase 5 observables
     pub poynting_mag: wgpu::Buffer,
     pub energy_dens:  wgpu::Buffer,
@@ -224,6 +238,7 @@ impl GpuGridState {
             a_g_vec:    make("a_g_vec",    total * 4),
             phi_g_vel:  make("phi_g_vel",  total),
             a_g_vel:    make("a_g_vel",    total * 4),
+            b_g_vec:    make("b_g_vec",    total * 4),
             // Phase 5 observables
             poynting_mag: make("poynting_mag", total),
             energy_dens:  make("energy_dens",  total),
@@ -1096,6 +1111,130 @@ impl GpuGridState {
         }
 
         log::info!("GEM FDTD: {n_steps} steps, κ_G={:.3e}", kappa_g);
+        Ok(())
+    }
+
+    // ── Phase 4b: Li-Torr gravitomagnetic London moment source ───────────────
+
+    /// Set A_g inside each superconducting, rotating entity to the pattern
+    ///     A_g(r) = −(m_e/e) · (ω × (r − r_centre))
+    /// which gives a uniform gravitomagnetic field B_g = −(2·m_e/e)·ω inside
+    /// the body (Wilhelm 2026 Eq. 23; the gravitomagnetic London moment).
+    ///
+    /// `entities` should be the pre-packed Li-Torr-relevant subset
+    /// (superconducting + non-zero ω).  Empty input is a no-op.
+    pub fn run_li_torr_source(
+        &self,
+        ctx:      &GpuContext,
+        grid:     &YeeGrid,
+        entities: &[LiTorrEntityGpu],
+    ) -> Result<(), SolverError> {
+        if entities.is_empty() { return Ok(()); }
+
+        let dev = ctx.device();
+        let n1  = self.n1;
+
+        let ent_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:    Some("li_torr_entities"),
+            contents: cast_slice(entities),
+            usage:    wgpu::BufferUsages::STORAGE,
+        });
+
+        let params     = GridParamsGpu::from_grid(grid, 0);
+        let params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:    Some("li_torr_params"),
+            contents: bytes_of(&params),
+            usage:    wgpu::BufferUsages::UNIFORM,
+        });
+
+        let pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label:               Some("li_torr_source"),
+            layout:              None,
+            module:              &ctx.shaders().li_torr_source,
+            entry_point:         "li_torr",
+            compilation_options: Default::default(),
+            cache:               None,
+        });
+
+        let bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+            label:   Some("li_torr_bg"),
+            layout:  &pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.a_g_vec.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: ent_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: params_buf.as_entire_binding() },
+            ],
+        });
+
+        let total    = n1 * n1 * n1;
+        let wg_count = total.div_ceil(256);
+
+        let mut enc = dev.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.dispatch_workgroups(wg_count, 1, 1);
+        }
+        ctx.queue().submit([enc.finish()]);
+        dev.poll(wgpu::MaintainBase::Wait);
+
+        log::info!(
+            "Li-Torr source: {} SC entities, {} grid vertices",
+            entities.len(), total,
+        );
+        Ok(())
+    }
+
+    /// Compute B_g = ∇×A_g.  GEM analogue of `run_derive_fields`.
+    pub fn run_derive_gem_fields(
+        &self,
+        ctx:  &GpuContext,
+        grid: &YeeGrid,
+    ) -> Result<(), SolverError> {
+        let dev = ctx.device();
+        let n1  = self.n1;
+
+        let params     = GridParamsGpu::from_grid(grid, 0);
+        let params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:    Some("derive_gem_params"),
+            contents: bytes_of(&params),
+            usage:    wgpu::BufferUsages::UNIFORM,
+        });
+
+        let pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label:               Some("derive_gem"),
+            layout:              None,
+            module:              &ctx.shaders().derive_gem,
+            entry_point:         "derive_gem",
+            compilation_options: Default::default(),
+            cache:               None,
+        });
+
+        let bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+            label:   Some("derive_gem_bg"),
+            layout:  &pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.a_g_vec.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.b_g_vec.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: params_buf.as_entire_binding() },
+            ],
+        });
+
+        let total    = n1 * n1 * n1;
+        let wg_count = total.div_ceil(256);
+
+        let mut enc = dev.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.dispatch_workgroups(wg_count, 1, 1);
+        }
+        ctx.queue().submit([enc.finish()]);
+        dev.poll(wgpu::MaintainBase::Wait);
+
+        log::info!("Derived B_g ({} vertices)", total);
         Ok(())
     }
 
