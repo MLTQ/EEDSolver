@@ -233,10 +233,10 @@ impl OracleSolver {
                         frequency_hz
                     ));
                 } else {
-                    warnings.push(format!(
+                    log::info!(
                         "AC injection: f={:.2}Hz, I₀={:.3}A over {n_steps} steps",
                         frequency_hz, current_a
-                    ));
+                    );
                 }
             } else {
                 gstate.run_fdtd(&self.ctx, &grid, dt, n_steps, gamma)?;
