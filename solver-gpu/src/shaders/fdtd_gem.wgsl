@@ -94,6 +94,10 @@ fn vel_gem(@builtin(global_invocation_id) gid: vec3<u32>) {
     let inv_dx2 = 1.0 / (dx * dx);
 
     // ── ∂C/∂t ≈ (C_cur − C_prev) / dt ────────────────────────────────────────
+    // Guard: dt=0 would give NaN (0/0) which corrupts all GEM fields.
+    // This should never happen after the dt_s==0 fix in lib.rs, but keep it
+    // as a shader-level safety net.
+    if dt <= 0.0 { return; }
     let dC_dt = (c_fld[flat] - c_fld_prev[flat]) / dt;
 
     // ── Laplacian of Φ_g ──────────────────────────────────────────────────────

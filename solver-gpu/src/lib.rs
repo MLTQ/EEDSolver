@@ -203,13 +203,23 @@ impl OracleSolver {
         // ── Phase 3: FDTD ────────────────────────────────────────────────────
         if let SolverMode::TimeDomain { dt_s, n_steps } = cfg.mode {
             let cfl_max = grid.cfl_dt() as f32;
-            let dt      = (dt_s as f32).min(cfl_max);
-            if dt < dt_s as f32 {
-                warnings.push(format!(
-                    "dt={:.3e}s clamped to CFL limit {:.3e}s (dx={:.3}mm, n={})",
-                    dt_s, cfl_max, grid.dx * 1e3, grid.n,
-                ));
-            }
+            // dt_s == 0.0 means "auto-set to CFL limit" (the frontend always sends 0
+            // since the UI says "dt auto-set to CFL limit").  Treating it as a literal
+            // zero makes FDTD do nothing and causes division-by-zero in the GEM shader
+            // (dC_dt = ΔC / dt).  Always use at least the CFL limit.
+            let dt = if dt_s == 0.0 {
+                cfl_max
+            } else {
+                let d = (dt_s as f32).min(cfl_max);
+                if d < dt_s as f32 {
+                    warnings.push(format!(
+                        "dt={:.3e}s clamped to CFL limit {:.3e}s (dx={:.3}mm, n={})",
+                        dt_s, cfl_max, grid.dx * 1e3, grid.n,
+                    ));
+                }
+                d
+            };
+            log::info!("FDTD dt={:.3e}s (CFL max={:.3e}s)", dt, cfl_max);
             // γ=0 → Lorenz gauge (Maxwell), γ=1 → full EED
             let gamma = if request.solver.lorenz_gauge { 0.0f32 }
                         else { request.eed.gamma as f32 };
@@ -257,7 +267,9 @@ impl OracleSolver {
         if request.gem.enabled && request.gem.kappa_g != 0.0 {
             if let SolverMode::TimeDomain { dt_s, n_steps } = cfg.mode {
                 let cfl_max = grid.cfl_dt() as f32;
-                let dt      = (dt_s as f32).min(cfl_max);
+                // Same auto-CFL rule as the EM FDTD: dt_s==0 → use CFL limit.
+                let dt = if dt_s == 0.0 { cfl_max }
+                         else { (dt_s as f32).min(cfl_max) };
                 let kappa   = request.gem.kappa_g as f32;
                 gstate.run_gem_fdtd(&self.ctx, &grid, dt, n_steps, kappa)?;
                 log::info!("GEM: κ_G={:.3e}", kappa);

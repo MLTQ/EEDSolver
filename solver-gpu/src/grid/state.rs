@@ -1570,28 +1570,35 @@ impl GpuGridState {
             })
         };
 
-        // Encode all iterations into one command buffer.
-        let mut enc     = dev.create_command_encoder(&Default::default());
+        // Batched Jacobi A iterations — submit every JACOBI_A_BATCH steps to
+        // stay under Metal's GPU-watchdog timeout (~5 s on macOS), which kills
+        // any single command buffer whose GPU time exceeds the limit.
+        const JACOBI_A_BATCH: u32 = 16;
+        let mut done    = 0u32;
         let mut to_pong = true;   // first write goes to pong (da_ping is input = zero)
 
-        for _ in 0..n_iter {
-            let (da_in, da_out): (&wgpu::Buffer, &wgpu::Buffer) = if to_pong {
-                (&da_ping, &da_pong)
-            } else {
-                (&da_pong, &da_ping)
-            };
-            let bg = make_bg(da_in, da_out);
-            {
-                let mut pass = enc.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&pipeline);
-                pass.set_bind_group(0, &bg, &[]);
-                pass.dispatch_workgroups(wg_count, 1, 1);
+        while done < n_iter {
+            let batch = JACOBI_A_BATCH.min(n_iter - done);
+            let mut enc = dev.create_command_encoder(&Default::default());
+            for _ in 0..batch {
+                let (da_in, da_out): (&wgpu::Buffer, &wgpu::Buffer) = if to_pong {
+                    (&da_ping, &da_pong)
+                } else {
+                    (&da_pong, &da_ping)
+                };
+                let bg = make_bg(da_in, da_out);
+                {
+                    let mut pass = enc.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&pipeline);
+                    pass.set_bind_group(0, &bg, &[]);
+                    pass.dispatch_workgroups(wg_count, 1, 1);
+                }
+                to_pong = !to_pong;
             }
-            to_pong = !to_pong;
+            ctx.queue().submit([enc.finish()]);
+            dev.poll(wgpu::MaintainBase::Wait);
+            done += batch;
         }
-
-        ctx.queue().submit([enc.finish()]);
-        dev.poll(wgpu::MaintainBase::Wait);
 
         // Determine which buffer holds the final δA result.
         // After n_iter steps starting from ping=0 → pong:
