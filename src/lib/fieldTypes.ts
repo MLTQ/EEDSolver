@@ -95,8 +95,12 @@ export interface EedParams {
  *  - `slw_mediated` — derivative coupling κ_G·∂C/∂t, κ_G·∇C.  Time-domain only;
  *                     blind to static configs (ORC-0km).
  *  - `both`         — SLW FDTD first, then KK-direct accumulated on top.
+ *  - `kk_poisson`   — elliptic KK reading: solve ∇²Φ_g=−κ_G·C, ∇²A_g=−κ_G·A
+ *                     (PCG, Dirichlet).  The inverse Laplacian smooths the
+ *                     sources so B_g ≠ κ_G·B (unlike the pointwise kk_direct);
+ *                     mode-independent (runs in static mode).  ORC-vzp.
  */
-export type CouplingMode = "kk_direct" | "slw_mediated" | "both";
+export type CouplingMode = "kk_direct" | "slw_mediated" | "both" | "kk_poisson";
 
 /** GEM (gravitoelectromagnetic) sector parameters. */
 export interface GemParams {

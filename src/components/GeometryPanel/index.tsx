@@ -429,13 +429,18 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
                   ? "Algebraic A_g = κ_G·A (Kaluza-Klein). Responds to static configs; any mode."
                   : request.gem.coupling_mode === "slw_mediated"
                   ? "Derivative κ_G·∂C/∂t, κ_G·∇C. Time-domain only; blind to static fields."
+                  : request.gem.coupling_mode === "kk_poisson"
+                  ? "Elliptic ∇²Φ_g = −κ_G·C (PCG). Smooths sources, B_g ≠ κ_G·B; runs in static mode."
                   : "SLW wave coupling + KK-direct accumulated on top."}
               </div>
             </div>
             {/* ── GEM config advisories ─────────────────────────────── */}
             {(() => {
               const isTimeDomain = request.solver.mode.mode === "time_domain";
-              const needsFdtd    = request.gem.coupling_mode !== "kk_direct";
+              // kk_direct and kk_poisson are both static-capable (no FDTD ramp);
+              // only the derivative SLW channels require time-domain stepping.
+              const needsFdtd    = request.gem.coupling_mode === "slw_mediated"
+                                || request.gem.coupling_mode === "both";
               const hasAcSource  = request.entities.some(e => {
                 if ((e.coil.frequency_hz ?? 0) <= 0) return false;
                 // Open helix is voltage-driven; others use current_A.
@@ -539,6 +544,7 @@ const COUPLING_MODES: [CouplingMode, string][] = [
   ["kk_direct",    "KK-direct"],
   ["slw_mediated", "SLW"],
   ["both",         "Both"],
+  ["kk_poisson",   "KK-Poisson"],
 ];
 
 // ── Sub-components ────────────────────────────────────────────────────────────

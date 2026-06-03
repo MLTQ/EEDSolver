@@ -359,6 +359,21 @@ impl OracleSolver {
                     gstate.run_gem_kk_direct(&self.ctx, kappa, additive)?;
                     log::info!("GEM KK-direct: κ_G={:.3e}, additive={}", kappa, additive);
                 }
+
+                // KK-Poisson (elliptic) channel — solves ∇²Φ_g=−κ_G·C and
+                // ∇²A_g=−κ_G·A via PCG (vs KkDirect's pointwise copy), so the
+                // inverse Laplacian smooths the sources and B_g ≠ κ_G·B in
+                // general.  Sources from the same snapshot (c_src, a_src) and is
+                // mode-independent — the headline static demos run in <100 ms
+                // without an FDTD ramp (ORC-vzp).
+                if matches!(mode, CouplingMode::KkPoisson) {
+                    const GEM_POISSON_TOL:      f32 = 1.0e-6;
+                    const GEM_POISSON_MAX_ITER: u32 = 2000;
+                    gstate.run_gem_poisson(
+                        &self.ctx, &grid, kappa, GEM_POISSON_TOL, GEM_POISSON_MAX_ITER,
+                    )?;
+                    log::info!("GEM KK-Poisson: κ_G={:.3e} (elliptic ∇²Φ_g=−κ_G·C)", kappa);
+                }
             }
 
             // Li-Torr gravitomagnetic London moment (Wilhelm 2026 Eq. 23).
