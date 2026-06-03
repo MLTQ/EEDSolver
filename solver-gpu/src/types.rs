@@ -39,6 +39,12 @@ pub enum CoilType {
     /// (radius = radius_m / plate_aspect).  The asymmetric geometry creates
     /// non-uniform φ and asymmetric E, the canonical TTB configuration.
     CapacitorAsymmetric,
+    /// Uniform-density sphere of *mass* (radius = radius_m), carrying NO current
+    /// — a pure gravitational (GEM) source.  Sources Φ_g via 4πG·ρ_m and, if
+    /// `mass_velocity_m_s` ≠ 0, A_g via the mass current J_m = ρ_m·v (ORC-0tl).
+    /// Use to seed a background Newtonian Φ_g (Woodward/Mach testbeds) or as the
+    /// −GM/r validation case.
+    MassSphere,
 }
 
 /// A single current-carrying entity in the simulation.
@@ -106,6 +112,18 @@ pub struct CoilParams {
     /// Typical TTB value: 5–20.
     #[serde(default = "default_plate_aspect")]
     pub plate_aspect: f64,
+
+    /// Uniform mass density [kg/m³] of a spherical mass region (radius_m) at the
+    /// entity position — a GEM source via ∇²Φ_g = 4πG·ρ_m (ORC-0tl).  0 = no
+    /// mass (pure EM entity).  Any entity with ρ_m > 0 contributes, but
+    /// `CoilType::MassSphere` is the dedicated current-free mass source.
+    #[serde(default)]
+    pub mass_density_kg_m3: f64,
+
+    /// Uniform translational velocity [m/s] of the mass region, giving a mass
+    /// current J_m = ρ_m·v that sources A_g via ∇²A_g = (4πG/c²)·J_m (ORC-0tl).
+    #[serde(default)]
+    pub mass_velocity_m_s: [f64; 3],
 }
 
 fn default_plate_aspect() -> f64 { 5.0 }
@@ -123,6 +141,8 @@ impl Default for CoilParams {
             frequency_hz:  0.0,
             plate_gap_m:   0.0,
             plate_aspect:  5.0,
+            mass_density_kg_m3: 0.0,
+            mass_velocity_m_s:  [0.0; 3],
         }
     }
 }

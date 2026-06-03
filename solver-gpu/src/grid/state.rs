@@ -151,6 +151,18 @@ pub struct LiTorrEntityGpu {
     pub omega_pad:     [f32; 4],
 }
 
+/// A uniform-density spherical mass region sourcing the GEM gravitational
+/// sector (ORC-0tl).  Used by both the static elliptic solve
+/// (`run_gem_mass_static`) and the time-domain leapfrog source kernel.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct MassSourceGpu {
+    /// (center.x, center.y, center.z, radius_m)
+    pub center_radius: [f32; 4],
+    /// (ρ_m·v.x, ρ_m·v.y, ρ_m·v.z, ρ_m) — mass current J_m and density in w.
+    pub jm_density:    [f32; 4],
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GpuGridState
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1438,6 +1450,103 @@ impl GpuGridState {
         dev.poll(wgpu::MaintainBase::Wait);
 
         log::info!("GEM KK-Poisson: κ_G={:.3e}, tol={:.1e}, max_iter={}", kappa_g, tol, max_iter);
+        Ok(())
+    }
+
+    /// Static (elliptic) GEM **mass** sourcing (ORC-0tl): solve the gravitational
+    /// Poisson equations on the grid and *add* the result to (Φ_g, A_g):
+    ///
+    /// ```text
+    /// ∇²Φ_g = 4πG·ρ_m                   (⇒ Φ_g = −GM/r outside a sphere)
+    /// ∇²A_g = (4πG/c²)·J_m,  J_m = ρ_m·v   (per Cartesian component)
+    /// ```
+    ///
+    /// Sign: gravity *attracts*, so ∇²Φ_g = +4πG·ρ_m (vs EM's −ρ/ε₀) → Φ_g < 0.
+    /// The elliptic RHS carries **no** c² — it is the Poisson equation directly.
+    /// (The c² appears only in the time-domain leapfrog form ∂²ₜΦ_g = c²∇²Φ_g + S,
+    /// where S = −4πG·c²·ρ_m cancels the wave operator's c²; see FIELD_THEORY.md.)
+    /// Additive: reads the current Φ_g/A_g (e.g. a κ_G contribution) and superposes
+    /// the mass term on top.  Dirichlet zero-boundary via the PCG solver.
+    pub fn run_gem_mass_static(
+        &self,
+        ctx:      &GpuContext,
+        grid:     &YeeGrid,
+        masses:   &[MassSourceGpu],
+        tol:      f32,
+        max_iter: u32,
+    ) -> Result<(), SolverError> {
+        if masses.is_empty() { return Ok(()); }
+
+        const FOUR_PI_G: f64 = 8.385_280_5e-10;    // 4πG  [m³ kg⁻¹ s⁻²]
+        const C2:        f64 = 8.987_551_787e16;   // c²   [m²/s²]
+
+        let dev = ctx.device();
+        let n   = self.scalar_len();
+        let n1  = self.n1 as usize;
+        let dx  = grid.dx;
+        let ext = grid.extent;
+
+        // Sample ρ_m and J_m = ρ_m·v on the grid (uniform inside each sphere,
+        // superposed).  w of jm_density holds ρ_m; xyz hold ρ_m·v.
+        let mut rho = vec![0.0f64; n];
+        let mut jm  = [vec![0.0f64; n], vec![0.0f64; n], vec![0.0f64; n]];
+        for iz in 0..n1 {
+            let z = -ext + iz as f64 * dx;
+            for iy in 0..n1 {
+                let y = -ext + iy as f64 * dx;
+                for ix in 0..n1 {
+                    let x   = -ext + ix as f64 * dx;
+                    let idx = ix + iy * n1 + iz * n1 * n1;
+                    for m in masses {
+                        let (cx, cy, cz, r) = (
+                            m.center_radius[0] as f64, m.center_radius[1] as f64,
+                            m.center_radius[2] as f64, m.center_radius[3] as f64,
+                        );
+                        let (ddx, ddy, ddz) = (x - cx, y - cy, z - cz);
+                        if ddx*ddx + ddy*ddy + ddz*ddz <= r * r {
+                            rho[idx]   += m.jm_density[3] as f64;
+                            jm[0][idx] += m.jm_density[0] as f64;
+                            jm[1][idx] += m.jm_density[1] as f64;
+                            jm[2][idx] += m.jm_density[2] as f64;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Scalar scratch target for each elliptic solve (zeroed by run_cg_phi).
+        let scratch = dev.create_buffer(&wgpu::BufferDescriptor {
+            label:              Some("gem_mass_scalar"),
+            size:               (n * 4) as u64,
+            usage:              wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // ── Φ_g: ∇²Φ_g = 4πG·ρ_m, superposed onto the existing Φ_g ──────────
+        let rhs_phi: Vec<f32> = rho.iter().map(|&r| (FOUR_PI_G * r) as f32).collect();
+        self.run_cg_phi(ctx, grid, &rhs_phi, 0.0, tol, max_iter, &scratch)?;
+        let phi_mass      = self.readback(ctx, &scratch, n)?;
+        let mut phi_g_cpu = self.readback(ctx, &self.phi_g, n)?;
+        for i in 0..n { phi_g_cpu[i] += phi_mass[i]; }
+        ctx.queue().write_buffer(&self.phi_g, 0, bytemuck::cast_slice(&phi_g_cpu));
+
+        // ── A_g: ∇²A_g = (4πG/c²)·J_m, per component, superposed ────────────
+        let any_current = jm.iter().any(|c| c.iter().any(|&v| v != 0.0));
+        if any_current {
+            let mut a_g_cpu = self.readback(ctx, &self.a_g_vec, self.vec_len())?;
+            for comp in 0..3usize {
+                let rhs: Vec<f32> = jm[comp].iter()
+                    .map(|&j| (FOUR_PI_G / C2 * j) as f32).collect();
+                self.run_cg_phi(ctx, grid, &rhs, 0.0, tol, max_iter, &scratch)?;
+                let sol = self.readback(ctx, &scratch, n)?;
+                for i in 0..n { a_g_cpu[i * 4 + comp] += sol[i]; }
+            }
+            ctx.queue().write_buffer(&self.a_g_vec, 0, bytemuck::cast_slice(&a_g_cpu));
+        }
+        dev.poll(wgpu::MaintainBase::Wait);
+
+        log::info!("GEM mass source (static): {} sphere(s), tol={:.1e}", masses.len(), tol);
         Ok(())
     }
 

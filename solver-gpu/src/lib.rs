@@ -416,6 +416,40 @@ impl OracleSolver {
                 }
             }
 
+            // ── GEM mass sources (ORC-0tl) ──────────────────────────────────
+            // Ordinary mass distributions source the gravitational sector
+            // independently of the κ_G (EED) channel: ∇²Φ_g = 4πG·ρ_m and
+            // ∇²A_g = (4πG/c²)·J_m.  Static elliptic solve, superposed on top of
+            // whatever the κ_G/Li-Torr channels produced.  Every entity with
+            // mass_density_kg_m3 > 0 is a uniform sphere of radius_m at its
+            // position (CoilType::MassSphere is the dedicated current-free form).
+            let mass_sources: Vec<grid::state::MassSourceGpu> = request.entities.iter()
+                .filter(|e| e.coil.mass_density_kg_m3 > 0.0)
+                .map(|e| {
+                    let rho = e.coil.mass_density_kg_m3;
+                    grid::state::MassSourceGpu {
+                        center_radius: [
+                            e.position_m[0] as f32, e.position_m[1] as f32,
+                            e.position_m[2] as f32, e.coil.radius_m as f32,
+                        ],
+                        jm_density: [
+                            (rho * e.coil.mass_velocity_m_s[0]) as f32,
+                            (rho * e.coil.mass_velocity_m_s[1]) as f32,
+                            (rho * e.coil.mass_velocity_m_s[2]) as f32,
+                            rho as f32,
+                        ],
+                    }
+                })
+                .collect();
+            if !mass_sources.is_empty() {
+                const MASS_TOL:      f32 = 1.0e-6;
+                const MASS_MAX_ITER: u32 = 4000;
+                gstate.run_gem_mass_static(
+                    &self.ctx, &grid, &mass_sources, MASS_TOL, MASS_MAX_ITER,
+                )?;
+                log::info!("GEM mass sources: {} sphere(s)", mass_sources.len());
+            }
+
             // Derive B_g = ∇×A_g for display whenever GEM machinery ran.
             gstate.run_derive_gem_fields(&self.ctx, &grid)?;
         }

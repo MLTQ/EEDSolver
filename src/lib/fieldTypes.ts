@@ -18,7 +18,9 @@ export type CoilType =
   /** Symmetric parallel-plate capacitor — produces uniform φ gradient between plates. */
   | "capacitor_symmetric"
   /** TTB asymmetric capacitor — large plate + small electrode; non-uniform φ and E. */
-  | "capacitor_asymmetric";
+  | "capacitor_asymmetric"
+  /** Pure mass sphere (no current) — GEM gravitational source ∇²Φ_g = 4πG·ρ_m. */
+  | "mass_sphere";
 
 export type SliceAxis = "x" | "y" | "z";
 
@@ -60,6 +62,11 @@ export interface CoilParams {
   plate_gap_m?:  number;
   /** TTB asymmetry ratio (large_radius / small_radius). Default 5. */
   plate_aspect?: number;
+  /** Uniform mass density [kg/m³] of a sphere (radius_m) at the entity position —
+   *  a GEM source via ∇²Φ_g = 4πG·ρ_m. 0 = no mass. (ORC-0tl) */
+  mass_density_kg_m3?: number;
+  /** Mass-region velocity [m/s] [vx,vy,vz] → mass current J_m = ρ_m·v sources A_g. */
+  mass_velocity_m_s?:  [number, number, number];
 }
 
 /** One current-carrying entity in the simulation. */
@@ -275,6 +282,7 @@ export const COIL_LABELS: Record<CoilType, string> = {
   open_helix:           "Open helix (AC/EED)",
   capacitor_symmetric:  "Capacitor — symmetric",
   capacitor_asymmetric: "Capacitor — TTB asymmetric",
+  mass_sphere:          "Mass sphere (GEM source)",
 };
 
 /** Coil types that use voltage instead of current. */

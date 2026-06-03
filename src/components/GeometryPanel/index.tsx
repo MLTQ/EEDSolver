@@ -124,6 +124,15 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
                              ? entity.coil.voltage_v : 100,
                 current_A: 0,
               });
+            } else if (t === "mass_sphere") {
+              // Pure mass source — no current; pre-fill a visible density.
+              setCoil({
+                coil_type: t,
+                current_A: 0,
+                mass_density_kg_m3:
+                  entity.coil.mass_density_kg_m3 && entity.coil.mass_density_kg_m3 > 0
+                    ? entity.coil.mass_density_kg_m3 : 1.0e9,
+              });
             } else {
               // Switching away from a capacitor or open helix zeroed current_A — restore
               // a sensible default so AC injection isn't silently a no-op.
@@ -153,6 +162,11 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
             TTB asymmetric — large plate + pointed electrode → non-uniform φ
           </div>
         )}
+        {entity.coil.coil_type === "mass_sphere" && (
+          <div className="text-xs text-emerald-600/80 mt-0.5">
+            Pure mass sphere — sources Φ_g = −GM/r (GEM gravity). No current.
+          </div>
+        )}
 
         <div className="flex gap-1.5 mt-0.5 flex-wrap">
           <button
@@ -180,14 +194,16 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
         const isCap = CAPACITOR_TYPES.includes(entity.coil.coil_type);
         const isAC  = AC_CAPABLE_TYPES.includes(entity.coil.coil_type);
         const isAsym = entity.coil.coil_type === "capacitor_asymmetric";
+        const isMass = entity.coil.coil_type === "mass_sphere";
         return (
           <Section label="Geometry">
             <Slider label="Radius" unit="m" value={entity.coil.radius_m}
               min={0.005} max={0.5} step={0.005}
               onChange={v => setCoil({ radius_m: v })}
-              hint={isCap ? (isAsym ? "Large electrode radius" : "Plate radius") : undefined}
+              hint={isMass ? "Mass sphere radius"
+                    : isCap ? (isAsym ? "Large electrode radius" : "Plate radius") : undefined}
             />
-            {!isCap && (
+            {!isCap && !isMass && (
               <>
                 <Slider label="Turns"  unit=""  value={entity.coil.turns}
                   min={1} max={100} step={1}
@@ -198,6 +214,28 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
                 <Slider label="Wire r" unit="m" value={entity.coil.wire_radius_m}
                   min={0.0002} max={0.005} step={0.0002} fmt={v => v.toFixed(4)}
                   onChange={v => setCoil({ wire_radius_m: v })} />
+              </>
+            )}
+
+            {/* Mass-sphere controls (GEM gravitational source, ORC-0tl) */}
+            {isMass && (
+              <>
+                <Slider label="Density" unit="kg/m³"
+                  value={entity.coil.mass_density_kg_m3 ?? 0}
+                  min={0} max={1e10} step={1e8} fmt={v => v.toExponential(1)}
+                  onChange={v => setCoil({ mass_density_kg_m3: v })}
+                  hint="ρ_m inside the sphere → ∇²Φ_g = 4πG·ρ_m (Φ_g = −GM/r)"
+                />
+                <Slider label="Velocity z" unit="m/s"
+                  value={entity.coil.mass_velocity_m_s?.[2] ?? 0}
+                  min={-1000} max={1000} step={10} fmt={v => v.toFixed(0)}
+                  onChange={v => setCoil({ mass_velocity_m_s: [
+                    entity.coil.mass_velocity_m_s?.[0] ?? 0,
+                    entity.coil.mass_velocity_m_s?.[1] ?? 0,
+                    v,
+                  ] })}
+                  hint="Mass current J_m = ρ_m·v sources A_g (gravitomagnetism)"
+                />
               </>
             )}
 
@@ -236,7 +274,7 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
             )}
 
             {/* Drive source — open helix is voltage-driven; closed loops use current */}
-            {!isCap && entity.coil.coil_type !== "open_helix" && (
+            {!isCap && !isMass && entity.coil.coil_type !== "open_helix" && (
               <Slider label="Current" unit="A" value={entity.coil.current_A}
                 min={0.1} max={1000} step={0.5}
                 onChange={v => setCoil({ current_A: v })} />

@@ -65,6 +65,9 @@ fn build_path(e: &CoilEntity) -> Vec<[f64; 3]> {
         // Their φ field is initialised separately by `initialize_phi_capacitor`.
         CoilType::CapacitorSymmetric  => vec![],
         CoilType::CapacitorAsymmetric => vec![],
+        // Pure mass source: no current, no Biot-Savart path.  Its Φ_g/A_g come
+        // from the GEM mass-source kernel (ORC-0tl), not from any winding.
+        CoilType::MassSphere          => vec![],
     }
 }
 

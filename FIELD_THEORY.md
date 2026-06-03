@@ -311,3 +311,18 @@ largest, so lab sensors can be positioned optimally. Key EED signatures to look 
   longitudinal A_g stays propagating (c²∇²A_g, no −c²∇(∇·A_g)). GEM EOM as
   implemented: ∂²Φ_g/∂t²=c²∇²Φ_g − c²∂ₜ(∇·A_g) + κ_G·∂ₜC ; ∂²A_g/∂t²=c²∇²A_g −
   ∇(∂ₜΦ_g) + κ_G·∇C. AC open helix now gives a finite, non-zero Φ_g.
+- **2026-06-03** GEM **mass sources** ρ_m, J_m wired (ORC-0tl): ordinary matter
+  sources the gravitational sector independently of the EED κ_G channel. Gravity
+  ATTRACTS, hence +4πG (vs EM's −1/ε₀). Static/elliptic form (solved directly):
+  ∇²Φ_g = 4πG·ρ_m, ∇²A_g = (4πG/c²)·J_m, J_m = ρ_m·v — RHS carries NO c², giving
+  Φ_g = −GM/r outside a sphere. Time-domain/leapfrog form: the source added to
+  the acceleration is −4πG·c²·ρ_m for Φ_g (and −4πG·J_m for A_g); the c² there
+  cancels the wave operator's c²∇². Same physics — the c² only appears where it
+  must undo the wave-operator c². Validation: uniform sphere → −GM/r recovered to
+  5.5% on 64³ (zero-Dirichlet box; →1% on 128³ + analytic BC). 4πG ≈ 8.385×10⁻¹⁰
+  survives f32 directly. Shipped as the static elliptic solve
+  (`run_gem_mass_static`, additive PCG, works in any mode); the per-step
+  dynamic/radiative leapfrog source is deferred (it only matters for *moving*
+  masses radiating gravitationally, not the static background the Woodward/Mach
+  testbeds use). Entity: `CoilType::MassSphere` (current-free) + the
+  `mass_density_kg_m3` / `mass_velocity_m_s` fields on any entity.
