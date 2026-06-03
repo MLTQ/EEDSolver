@@ -168,7 +168,7 @@ impl OracleSolver {
             if grid.n > 32 {
                 // 100 PCG iterations converge to 1e-6 relative tolerance
                 // for typical EED problems on 64³–256³ grids.
-                gstate.run_cg_phi(&self.ctx, &grid, &rhs, alpha_sq, 1e-6, 100)?;
+                gstate.run_cg_phi(&self.ctx, &grid, &rhs, alpha_sq, 1e-6, 100, &gstate.phi)?;
                 log::info!(
                     "Static EED φ (PCG): α={:.3} m⁻¹  λ={:.3} m",
                     request.eed.alpha,
@@ -200,26 +200,75 @@ impl OracleSolver {
             gstate.run_observables(&self.ctx, &grid)?;
         }
 
+        // ── Snapshot EED potentials for KK-direct GEM coupling ───────────────
+        // The KK identification (A_g ← κ_G·A, Φ_g ← κ_G·C) must source from the
+        // *physically correct* potentials of the configuration — but which set
+        // that is depends on the drive (ORC-x7m):
+        //
+        //   • Unsustained DC drive (no AC injection): the FDTD loop radiates the
+        //     un-fed static field to ~0, so we must capture A/C *before* the
+        //     loop.  Here the static A is the Coulomb-gauge Biot-Savart field
+        //     and C ≈ ∇·A_BS ≈ 0 — which is the correct EED answer for a closed
+        //     loop (charge conserved ⇒ □C = 0 ⇒ C = 0; the AB signal lives in A).
+        //
+        //   • Sustained AC drive: the injected J(t) keeps the field alive, and
+        //     the FDTD evolves the genuine *dynamical* EED scalar C (the deleted
+        //     7th DOF) — non-zero precisely where ∂µJµ ≠ 0 (e.g. an open helix's
+        //     charged tips).  Coupling to the pre-FDTD Coulomb-gauge snapshot
+        //     (C ≈ 0) would throw that away, so we snapshot *after* the loop.
+        //
+        // `snapshot_after_fdtd` selects the post-loop capture for sustained
+        // drives; otherwise we snapshot the static fields here, pre-loop.
+        let is_time_domain   = matches!(cfg.mode, SolverMode::TimeDomain { .. });
+        let snapshot_after_fdtd = request.gem.enabled && is_time_domain && has_ac;
+        if request.gem.enabled && !snapshot_after_fdtd {
+            gstate.snapshot_gem_sources(&self.ctx);
+        }
+
+        // SLW-mediated (derivative) GEM coupling now co-evolves *inside* the EM
+        // FDTD loop (ORC-j07): the gravitational sector takes one step after each
+        // EM step, against a freshly-refreshed C, so ∂C/∂t = (Cⁿ⁺¹−Cⁿ)/dt is
+        // correct (the old post-hoc pass divided the whole-run ΔC by one dt — an
+        // n_steps scale error — and saw a frozen ∇C).  Pass κ_G down to the FDTD
+        // for the derivative channel only; KkDirect stays a post-loop algebraic
+        // assignment (Phase 4).
+        let gem_slw_kappa: Option<f32> = if request.gem.enabled
+            && request.gem.kappa_g != 0.0
+            && matches!(request.gem.coupling_mode,
+                        types::CouplingMode::SlwMediated | types::CouplingMode::Both)
+        {
+            Some(request.gem.kappa_g as f32)
+        } else {
+            None
+        };
+
         // ── Phase 3: FDTD ────────────────────────────────────────────────────
         if let SolverMode::TimeDomain { dt_s, n_steps } = cfg.mode {
-            let cfl_max = grid.cfl_dt() as f32;
-            // dt_s == 0.0 means "auto-set to CFL limit" (the frontend always sends 0
-            // since the UI says "dt auto-set to CFL limit").  Treating it as a literal
-            // zero makes FDTD do nothing and causes division-by-zero in the GEM shader
-            // (dC_dt = ΔC / dt).  Always use at least the CFL limit.
+            // The bare potential-primary leapfrog sits at the marginal stability
+            // edge (dt·ω = 2) at *exactly* dt = dx/(c√3); the EED gauge coupling
+            // then tips it over into a NaN blowup.  Step at a Courant-safe fraction
+            // of the theoretical limit instead (empirically stable to ~0.85·CFL for
+            // γ=1; 0.5 leaves a comfortable margin).  See ORC-4eg.
+            const CFL_SAFETY: f32 = 0.5;
+            let cfl_max  = grid.cfl_dt() as f32;
+            let dt_limit = cfl_max * CFL_SAFETY;
+            // dt_s == 0.0 means "auto-set to the stable limit" (the frontend always
+            // sends 0 since the UI says "dt auto-set to CFL limit").  Treating it as
+            // a literal zero makes FDTD do nothing and divides by zero in the GEM
+            // shader (dC_dt = ΔC / dt).  Always use at least the stable limit.
             let dt = if dt_s == 0.0 {
-                cfl_max
+                dt_limit
             } else {
-                let d = (dt_s as f32).min(cfl_max);
+                let d = (dt_s as f32).min(dt_limit);
                 if d < dt_s as f32 {
                     warnings.push(format!(
-                        "dt={:.3e}s clamped to CFL limit {:.3e}s (dx={:.3}mm, n={})",
-                        dt_s, cfl_max, grid.dx * 1e3, grid.n,
+                        "dt={:.3e}s clamped to stable limit {:.3e}s (={:.2}·CFL, dx={:.3}mm, n={})",
+                        dt_s, dt_limit, CFL_SAFETY, grid.dx * 1e3, grid.n,
                     ));
                 }
                 d
             };
-            log::info!("FDTD dt={:.3e}s (CFL max={:.3e}s)", dt, cfl_max);
+            log::info!("FDTD dt={:.3e}s ({:.2}·CFL, CFL max={:.3e}s)", dt, CFL_SAFETY, cfl_max);
             // γ=0 → Lorenz gauge (Maxwell), γ=1 → full EED
             let gamma = if request.solver.lorenz_gauge { 0.0f32 }
                         else { request.eed.gamma as f32 };
@@ -241,7 +290,7 @@ impl OracleSolver {
                 let frequency_hz = ac_entity.coil.frequency_hz as f32;
                 gstate.run_fdtd_ac(
                     &self.ctx, &grid, dt, n_steps, gamma, None,
-                    current_a, frequency_hz, 0.0,
+                    current_a, frequency_hz, 0.0, gem_slw_kappa,
                 )?;
                 if current_a == 0.0 {
                     warnings.push(format!(
@@ -256,30 +305,59 @@ impl OracleSolver {
                     );
                 }
             } else {
-                gstate.run_fdtd(&self.ctx, &grid, dt, n_steps, gamma)?;
+                gstate.run_fdtd(&self.ctx, &grid, dt, n_steps, gamma, gem_slw_kappa)?;
             }
 
             // Re-compute observables using evolved E = -∇φ - a_vel.
             gstate.run_observables(&self.ctx, &grid)?;
+
+            // Sustained (AC) drive: capture the *evolved* fields now, so the
+            // KK-direct coupling sees the dynamical EED scalar C the FDTD just
+            // produced rather than the pre-loop Coulomb-gauge snapshot (ORC-x7m).
+            if snapshot_after_fdtd {
+                gstate.snapshot_gem_sources(&self.ctx);
+                log::info!("GEM sources snapshotted post-FDTD (sustained AC drive)");
+            }
         }
 
         // ── Phase 4: GEM gravitational sector ────────────────────────────────
         if request.gem.enabled {
-            // κ_G time-domain coupling (existing path).  Pure derivative coupling
-            // — known to be blind to static configurations (see ORC-jlu epic).
+            // κ_G coupling.  Two channels (Wilhelm §4.10):
+            //   • KkDirect    — algebraic Φ_g=κ_G·C, A_g=κ_G·A from the EED
+            //                   potential snapshot.  The snapshot is the static
+            //                   Biot-Savart field for unsustained DC drives, but
+            //                   the *evolved* (post-FDTD) dynamical field for
+            //                   sustained AC drives (ORC-x7m).  Responds to DC
+            //                   configs, works in any mode, stable (ORC-bn6).
+            //   • SlwMediated — derivative κ_G·∂C/∂t, κ_G·∇C wave coupling;
+            //                   time-domain only, blind to static configs (ORC-0km).
+            //   • Both        — SLW FDTD first, then KK-direct accumulated on top.
             if request.gem.kappa_g != 0.0 {
-                if let SolverMode::TimeDomain { dt_s, n_steps } = cfg.mode {
-                    let cfl_max = grid.cfl_dt() as f32;
-                    // Same auto-CFL rule as the EM FDTD: dt_s==0 → use CFL limit.
-                    let dt = if dt_s == 0.0 { cfl_max }
-                             else { (dt_s as f32).min(cfl_max) };
-                    let kappa = request.gem.kappa_g as f32;
-                    gstate.run_gem_fdtd(&self.ctx, &grid, dt, n_steps, kappa)?;
-                    log::info!("GEM: κ_G={:.3e}", kappa);
-                } else {
-                    warnings.push(
-                        "GEM κ_G coupling requires time-domain mode. Enable it in the Mode section.".into()
-                    );
+                use types::CouplingMode;
+                let kappa = request.gem.kappa_g as f32;
+                let mode  = request.gem.coupling_mode;
+
+                // SLW (derivative) channel — already co-evolved INSIDE the EM
+                // FDTD loop in Phase 3 (ORC-j07), using the same Courant-safe dt
+                // so EM/GEM sim times stay aligned.  Nothing to step here; only
+                // warn if it was requested without a time-domain solve.
+                if matches!(mode, CouplingMode::SlwMediated | CouplingMode::Both) {
+                    if is_time_domain {
+                        log::info!("GEM SLW-mediated: κ_G={:.3e} (interleaved per-step with EM FDTD)", kappa);
+                    } else {
+                        warnings.push(
+                            "GEM SLW-mediated coupling requires time-domain mode. \
+                             Enable it in the Mode section (or switch to KK-direct).".into()
+                        );
+                    }
+                }
+
+                // KK-direct (algebraic) channel — pointwise, mode-independent.
+                // In Both mode it accumulates on top of the SLW FDTD result.
+                if matches!(mode, CouplingMode::KkDirect | CouplingMode::Both) {
+                    let additive = matches!(mode, CouplingMode::Both);
+                    gstate.run_gem_kk_direct(&self.ctx, kappa, additive)?;
+                    log::info!("GEM KK-direct: κ_G={:.3e}, additive={}", kappa, additive);
                 }
             }
 
@@ -332,7 +410,7 @@ impl OracleSolver {
             &self.ctx, &gstate, &grid, &request.slices,
         )?;
 
-        let maxima = postproc::compute_maxima(&self.ctx, &gstate, &grid)?;
+        let maxima = postproc::compute_maxima(&self.ctx, &gstate, &grid, &mut warnings)?;
 
         let holonomies = postproc::compute_holonomies(
             &self.ctx, &gstate, &grid, &request.holonomy_paths,

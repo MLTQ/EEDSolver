@@ -68,7 +68,7 @@ async fn test_slw_propagation_speed() {
 
     // Run N steps (γ=0, no sponge) so the wavefront propagates cleanly.
     let n_steps = 15_u32;
-    gstate.run_fdtd_sponge(&ctx, &grid, dt as f32, n_steps, 0.0, Some(0.0))
+    gstate.run_fdtd_sponge(&ctx, &grid, dt as f32, n_steps, 0.0, Some(0.0), None)
         .expect("FDTD failed");
 
     // Expected wavefront radius (in physical metres and grid cells).

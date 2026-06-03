@@ -85,6 +85,16 @@ pub struct GemParamsGpu {
     pub kappa_g: f32,
 }
 
+/// Must match `KkParams` in `gem_kk_direct.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct KkParamsGpu {
+    pub n1:       u32,
+    pub kappa_g:  f32,
+    pub additive: u32,   // 0 = overwrite, 1 = accumulate (Both mode)
+    pub _pad:     u32,
+}
+
 /// Uniform params for the observables kernel.
 /// Must match `ObsParams` in `observables.wgsl`.
 #[repr(C)]
@@ -182,6 +192,14 @@ pub struct GpuGridState {
     pub b_vec:       wgpu::Buffer,
     pub c_fld:       wgpu::Buffer,
     pub c_fld_prev:  wgpu::Buffer,
+    /// Static EED potentials captured for KK-direct GEM coupling (ORC-bn6).
+    /// `a_src` ← a_vec and `c_src` ← c_fld are snapshotted *before* the EM FDTD
+    /// loop (which, for a DC source with no sustaining current, radiates the
+    /// static field to zero).  KK-direct sources A_g ← κ_G·a_src, Φ_g ← κ_G·c_src
+    /// so the gravitational sector tracks the *physical* potentials of the
+    /// configuration (e.g. the static Aharonov-Bohm A of a toroid).
+    pub a_src:       wgpu::Buffer,
+    pub c_src:       wgpu::Buffer,
     // AC source (4 × f32: Jx, Jy, Jz, pad)
     pub j_src:       wgpu::Buffer,
     // GEM
@@ -193,6 +211,39 @@ pub struct GpuGridState {
     // Phase 5 observables
     pub poynting_mag: wgpu::Buffer,
     pub energy_dens:  wgpu::Buffer,
+}
+
+/// SLW-mediated GEM leapfrog resources, built once and stepped *inside* the EM
+/// FDTD loop so the gravitational sector co-evolves with the live EED C-field
+/// (ORC-j07).  This replaces the old post-hoc `run_gem_fdtd`, which stepped
+/// (Φ_g, A_g) against a frozen C snapshot: ∇C was constant across all GEM steps
+/// and ∂C/∂t = (C_final − C_initial)/dt was wrong by a factor of ~n_steps (the
+/// whole-run ΔC divided by a single timestep).
+struct GemStepper {
+    vel_phi: wgpu::ComputePipeline,
+    vel_a:   wgpu::ComputePipeline,
+    pos:     wgpu::ComputePipeline,
+    bg:      wgpu::BindGroup,
+    wg:      u32,
+    /// Keeps the params UNIFORM buffer alive for the bind group's lifetime.
+    _params: wgpu::Buffer,
+}
+
+impl GemStepper {
+    /// Encode one GEM leapfrog step (vel_gem_phi → vel_gem_a → pos_gem) into
+    /// `enc`.  The velocity update is Gauss-Seidel split (ORC-21g): vel_gem_a
+    /// reads the phi_g_vel that vel_gem_phi just wrote, so the φ_g↔A_g cross
+    /// coupling is conditionally stable instead of skew-unstable.  Must be called
+    /// AFTER the EM step's `update_c`, with `c_fld_prev` still holding the
+    /// pre-step C, so the shader's ∂C/∂t = (Cⁿ⁺¹ − Cⁿ)/dt is numerically exact.
+    fn encode_step(&self, enc: &mut wgpu::CommandEncoder) {
+        for pipe in [&self.vel_phi, &self.vel_a, &self.pos] {
+            let mut p = enc.begin_compute_pass(&Default::default());
+            p.set_pipeline(pipe);
+            p.set_bind_group(0, &self.bg, &[]);
+            p.dispatch_workgroups(self.wg, 1, 1);
+        }
+    }
 }
 
 impl GpuGridState {
@@ -231,6 +282,9 @@ impl GpuGridState {
             b_vec:      make("b_vec",      total * 4),
             c_fld:      make("c_fld",      total),
             c_fld_prev: make("c_fld_prev", total),
+            // Static EED-potential snapshots for KK-direct GEM coupling
+            a_src:      make("a_src",      total * 4),
+            c_src:      make("c_src",      total),
             // AC source buffer (zero-initialised; filled by upload_j_source)
             j_src:      make("j_src",      total * 4),
             // GEM sector
@@ -645,13 +699,43 @@ impl GpuGridState {
     ///   - `Some(0.0)` → disable sponge entirely (useful for conservation tests).
     pub fn run_fdtd(
         &self,
-        ctx:     &GpuContext,
-        grid:    &YeeGrid,
-        dt:      f32,
-        n_steps: u32,
-        gamma:   f32,   // EED coupling: 1.0 = full EED, 0.0 = Maxwell
+        ctx:       &GpuContext,
+        grid:      &YeeGrid,
+        dt:        f32,
+        n_steps:   u32,
+        gamma:     f32,            // EED coupling: 1.0 = full EED, 0.0 = Maxwell
+        gem_kappa: Option<f32>,    // Some(κ_G) → interleave SLW-GEM per step (ORC-j07)
     ) -> Result<(), SolverError> {
-        self.run_fdtd_sponge(ctx, grid, dt, n_steps, gamma, None)
+        self.run_fdtd_sponge(ctx, grid, dt, n_steps, gamma, None, gem_kappa)
+    }
+
+    /// Explicit bind-group layout shared by the EM-FDTD velocity/position passes
+    /// (bindings: 0 phi, 1 a_vec, 2 phi_vel, 3 a_vel — all storage rw; 4 params
+    /// uniform).  Used so a SINGLE bind group works for `vel_step_phi`,
+    /// `vel_step_a`, and `pos_step` even though each touches a different subset of
+    /// buffers — auto-derived layouts (`layout: None`) would omit unused bindings
+    /// and reject a 5-entry bind group (ORC-4eg split the velocity pass in two).
+    fn fdtd_em_bgl(dev: &wgpu::Device) -> wgpu::BindGroupLayout {
+        let storage_rw = wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false, min_binding_size: None,
+        };
+        let entry = |binding: u32, ty: wgpu::BindingType| wgpu::BindGroupLayoutEntry {
+            binding, visibility: wgpu::ShaderStages::COMPUTE, ty, count: None,
+        };
+        dev.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("fdtd_em_bgl"),
+            entries: &[
+                entry(0, storage_rw),
+                entry(1, storage_rw),
+                entry(2, storage_rw),
+                entry(3, storage_rw),
+                entry(4, wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false, min_binding_size: None,
+                }),
+            ],
+        })
     }
 
     /// Like `run_fdtd` but with explicit sponge control.
@@ -664,6 +748,7 @@ impl GpuGridState {
         n_steps:   u32,
         gamma:     f32,
         sigma_max: Option<f32>,
+        gem_kappa: Option<f32>,    // Some(κ_G) → interleave SLW-GEM per step (ORC-j07)
     ) -> Result<(), SolverError> {
         if n_steps == 0 { return Ok(()); }
 
@@ -675,14 +760,27 @@ impl GpuGridState {
         let n1   = self.n1;
 
         // Build pipelines once — shader modules come from the pre-compiled cache.
-        let vel_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("fdtd_vel"), layout: None, module: &ctx.shaders().fdtd_em,
-            entry_point: "vel_step",
+        // The EM passes share ONE explicit bind-group layout (ORC-4eg): the
+        // velocity update is split into vel_step_phi + vel_step_a so the EED
+        // gauge cross-coupling is Gauss-Seidel-ordered (conditionally stable)
+        // rather than the old fused vel_step (unconditionally unstable for γ≠0).
+        let em_bgl = Self::fdtd_em_bgl(dev);
+        let em_pl  = dev.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fdtd_em_pl"), bind_group_layouts: &[&em_bgl], push_constant_ranges: &[],
+        });
+        let vel_phi_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("fdtd_vel_phi"), layout: Some(&em_pl), module: &ctx.shaders().fdtd_em,
+            entry_point: "vel_step_phi",
+            compilation_options: Default::default(), cache: None,
+        });
+        let vel_a_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("fdtd_vel_a"), layout: Some(&em_pl), module: &ctx.shaders().fdtd_em,
+            entry_point: "vel_step_a",
             compilation_options: Default::default(), cache: None,
         });
 
         let pos_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("fdtd_pos"), layout: None, module: &ctx.shaders().fdtd_em,
+            label: Some("fdtd_pos"), layout: Some(&em_pl), module: &ctx.shaders().fdtd_em,
             entry_point: "pos_step",
             compilation_options: Default::default(), cache: None,
         });
@@ -714,23 +812,18 @@ impl GpuGridState {
             usage:    wgpu::BufferUsages::UNIFORM,
         });
 
-        let em_entries = |layout: &wgpu::BindGroupLayout| {
-            dev.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("fdtd_em_bg"),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: self.phi.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: self.a_vec.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: self.phi_vel.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: self.a_vel.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: fdtd_params_buf.as_entire_binding() },
-                ],
-            })
-        };
-
-        // vel_step and pos_step share the same bind group layout.
-        let vel_bg = em_entries(&vel_pipeline.get_bind_group_layout(0));
-        let pos_bg = em_entries(&pos_pipeline.get_bind_group_layout(0));
+        // One bind group serves all three EM passes (shared explicit layout).
+        let em_bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fdtd_em_bg"),
+            layout: &em_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.phi.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.a_vec.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: self.phi_vel.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: self.a_vel.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: fdtd_params_buf.as_entire_binding() },
+            ],
+        });
 
         let cf_bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cf_bg"),
@@ -746,15 +839,21 @@ impl GpuGridState {
         let wg       = (n1 * n1 * n1).div_ceil(256);
         let c_bytes  = (self.scalar_len() * 4) as u64;
 
+        // Optional SLW-GEM interleaving (ORC-j07): when present, each EM step is
+        // followed by a C refresh + one GEM step so ∂C/∂t and ∇C co-evolve.
+        let gem = gem_kappa
+            .filter(|&k| k != 0.0)
+            .map(|k| self.gem_stepper(ctx, grid, dt, k));
+
         // Batched FDTD — submit every STEP_BATCH steps to stay under Metal's
         // GPU-watchdog timeout (~5 s on macOS).  Encoding the entire loop into
         // one command buffer triggers the watchdog at ~300 steps on 128³+ grids.
         const STEP_BATCH: u32 = 32;
 
-        // Snapshot c_fld → c_fld_prev once before the first batch.
-        // c_fld is not updated inside the loop so all per-step snapshots in the
-        // single-buffer scheme were identical — this is semantically equivalent.
-        {
+        // Snapshot c_fld → c_fld_prev once before the first batch.  Only for the
+        // non-interleaved path: with GEM interleaving, the per-step copy below
+        // captures the true pre-step C every step.
+        if gem.is_none() {
             let mut enc = dev.create_command_encoder(&Default::default());
             enc.copy_buffer_to_buffer(&self.c_fld, 0, &self.c_fld_prev, 0, c_bytes);
             ctx.queue().submit([enc.finish()]);
@@ -765,17 +864,40 @@ impl GpuGridState {
             let batch = STEP_BATCH.min(n_steps - done);
             let mut enc = dev.create_command_encoder(&Default::default());
             for _ in 0..batch {
+                // GEM interleave: snapshot the pre-step C before we advance it.
+                if gem.is_some() {
+                    enc.copy_buffer_to_buffer(&self.c_fld, 0, &self.c_fld_prev, 0, c_bytes);
+                }
+                // Pass 1a: φ-velocity (uses a_vel^n).
                 {
                     let mut pass = enc.begin_compute_pass(&Default::default());
-                    pass.set_pipeline(&vel_pipeline);
-                    pass.set_bind_group(0, &vel_bg, &[]);
+                    pass.set_pipeline(&vel_phi_pipeline);
+                    pass.set_bind_group(0, &em_bg, &[]);
                     pass.dispatch_workgroups(wg, 1, 1);
                 }
+                // Pass 1b: A-velocity (uses the freshly-updated phi_vel^{n+1}).
+                {
+                    let mut pass = enc.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&vel_a_pipeline);
+                    pass.set_bind_group(0, &em_bg, &[]);
+                    pass.dispatch_workgroups(wg, 1, 1);
+                }
+                // Pass 2: positions.
                 {
                     let mut pass = enc.begin_compute_pass(&Default::default());
                     pass.set_pipeline(&pos_pipeline);
-                    pass.set_bind_group(0, &pos_bg, &[]);
+                    pass.set_bind_group(0, &em_bg, &[]);
                     pass.dispatch_workgroups(wg, 1, 1);
+                }
+                // GEM interleave: refresh C from the new (A,φ), then one GEM step.
+                if let Some(g) = &gem {
+                    {
+                        let mut pass = enc.begin_compute_pass(&Default::default());
+                        pass.set_pipeline(&cf_pipeline);
+                        pass.set_bind_group(0, &cf_bg, &[]);
+                        pass.dispatch_workgroups(wg, 1, 1);
+                    }
+                    g.encode_step(&mut enc);
                 }
             }
             ctx.queue().submit([enc.finish()]);
@@ -783,8 +905,9 @@ impl GpuGridState {
             done += batch;
         }
 
-        // Update C = div(A) + (1/c²)·∂φ/∂t after all steps.
-        {
+        // Non-interleaved path: update C once after all steps.  (Interleaved
+        // already refreshed c_fld on the final step.)
+        if gem.is_none() {
             let mut enc = dev.create_command_encoder(&Default::default());
             {
                 let mut pass = enc.begin_compute_pass(&Default::default());
@@ -796,8 +919,9 @@ impl GpuGridState {
             dev.poll(wgpu::MaintainBase::Wait);
         }
 
-        log::info!("FDTD: {n_steps} steps × dt={:.3e} s  (sim time {:.3e} s)",
-            dt, n_steps as f32 * dt);
+        log::info!("FDTD: {n_steps} steps × dt={:.3e} s  (sim time {:.3e} s){}",
+            dt, n_steps as f32 * dt,
+            if gem.is_some() { "  [SLW-GEM interleaved]" } else { "" });
         Ok(())
     }
 
@@ -824,6 +948,7 @@ impl GpuGridState {
         current_a:    f32,
         frequency_hz: f32,
         t_start_s:    f32,
+        gem_kappa:    Option<f32>,    // Some(κ_G) → interleave SLW-GEM per step (ORC-j07)
     ) -> Result<(), SolverError> {
         if n_steps == 0 { return Ok(()); }
 
@@ -838,13 +963,24 @@ impl GpuGridState {
         let n1   = self.n1;
 
         // Build FDTD pipelines from pre-compiled shader cache.
-        let vel_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("fdtd_vel_ac"), layout: None, module: &ctx.shaders().fdtd_em,
-            entry_point: "vel_step",
+        // EM passes share one explicit bind-group layout; the velocity update is
+        // split into vel_step_phi + vel_step_a for Gauss-Seidel stability (ORC-4eg).
+        let em_bgl = Self::fdtd_em_bgl(dev);
+        let em_pl  = dev.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fdtd_em_pl_ac"), bind_group_layouts: &[&em_bgl], push_constant_ranges: &[],
+        });
+        let vel_phi_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("fdtd_vel_phi_ac"), layout: Some(&em_pl), module: &ctx.shaders().fdtd_em,
+            entry_point: "vel_step_phi",
+            compilation_options: Default::default(), cache: None,
+        });
+        let vel_a_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("fdtd_vel_a_ac"), layout: Some(&em_pl), module: &ctx.shaders().fdtd_em,
+            entry_point: "vel_step_a",
             compilation_options: Default::default(), cache: None,
         });
         let pos_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("fdtd_pos_ac"), layout: None, module: &ctx.shaders().fdtd_em,
+            label: Some("fdtd_pos_ac"), layout: Some(&em_pl), module: &ctx.shaders().fdtd_em,
             entry_point: "pos_step",
             compilation_options: Default::default(), cache: None,
         });
@@ -896,21 +1032,18 @@ impl GpuGridState {
             })
         }).collect();
 
-        // Build shared bind groups (EM and C-field passes; same every step).
-        let em_bg = |layout: &wgpu::BindGroupLayout| {
-            dev.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("fdtd_em_bg_ac"), layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: self.phi.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: self.a_vec.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: self.phi_vel.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: self.a_vel.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: fdtd_params_buf.as_entire_binding() },
-                ],
-            })
-        };
-        let vel_bg = em_bg(&vel_pipeline.get_bind_group_layout(0));
-        let pos_bg = em_bg(&pos_pipeline.get_bind_group_layout(0));
+        // One bind group serves all three EM passes (shared explicit layout).
+        let em_bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fdtd_em_bg_ac"),
+            layout: &em_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.phi.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.a_vec.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: self.phi_vel.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: self.a_vel.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: fdtd_params_buf.as_entire_binding() },
+            ],
+        });
 
         let cf_bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cf_bg_ac"), layout: &cf_pipeline.get_bind_group_layout(0),
@@ -934,11 +1067,18 @@ impl GpuGridState {
             })
         }).collect();
 
+        // Optional SLW-GEM interleaving (ORC-j07): each EM step is followed by a
+        // C refresh + one GEM step so the gravitational sector co-evolves with
+        // the live, AC-driven C (correct per-step ∂C/∂t and ∇C).
+        let gem = gem_kappa
+            .filter(|&k| k != 0.0)
+            .map(|k| self.gem_stepper(ctx, grid, dt, k));
+
         // Batched AC FDTD — same watchdog-safe strategy as run_fdtd_sponge.
-        // Snapshot c_fld → c_fld_prev once (all per-step copies were identical
-        // since c_fld is only updated by c_field_update after the full loop).
+        // Snapshot c_fld → c_fld_prev once (non-interleaved path only; the
+        // interleaved path copies the true pre-step C every step instead).
         const STEP_BATCH_AC: usize = 32;
-        {
+        if gem.is_none() {
             let mut enc = dev.create_command_encoder(&Default::default());
             enc.copy_buffer_to_buffer(&self.c_fld, 0, &self.c_fld_prev, 0, c_bytes);
             ctx.queue().submit([enc.finish()]);
@@ -950,23 +1090,47 @@ impl GpuGridState {
             let batch_end = (done + STEP_BATCH_AC).min(total);
             let mut enc = dev.create_command_encoder(&Default::default());
             for s in done..batch_end {
+                // GEM interleave: snapshot the pre-step C before we advance it.
+                if gem.is_some() {
+                    enc.copy_buffer_to_buffer(&self.c_fld, 0, &self.c_fld_prev, 0, c_bytes);
+                }
+                // Inject J(t) into a_vel before the velocity passes.
                 {
                     let mut pass = enc.begin_compute_pass(&Default::default());
                     pass.set_pipeline(&inj_pipeline);
                     pass.set_bind_group(0, &inj_bgs[s], &[]);
                     pass.dispatch_workgroups(wg, 1, 1);
                 }
+                // Pass 1a: φ-velocity (uses a_vel^n incl. injection).
                 {
                     let mut pass = enc.begin_compute_pass(&Default::default());
-                    pass.set_pipeline(&vel_pipeline);
-                    pass.set_bind_group(0, &vel_bg, &[]);
+                    pass.set_pipeline(&vel_phi_pipeline);
+                    pass.set_bind_group(0, &em_bg, &[]);
                     pass.dispatch_workgroups(wg, 1, 1);
                 }
+                // Pass 1b: A-velocity (uses the freshly-updated phi_vel^{n+1}).
+                {
+                    let mut pass = enc.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&vel_a_pipeline);
+                    pass.set_bind_group(0, &em_bg, &[]);
+                    pass.dispatch_workgroups(wg, 1, 1);
+                }
+                // Pass 2: positions.
                 {
                     let mut pass = enc.begin_compute_pass(&Default::default());
                     pass.set_pipeline(&pos_pipeline);
-                    pass.set_bind_group(0, &pos_bg, &[]);
+                    pass.set_bind_group(0, &em_bg, &[]);
                     pass.dispatch_workgroups(wg, 1, 1);
+                }
+                // GEM interleave: refresh C from the new (A,φ), then one GEM step.
+                if let Some(g) = &gem {
+                    {
+                        let mut pass = enc.begin_compute_pass(&Default::default());
+                        pass.set_pipeline(&cf_pipeline);
+                        pass.set_bind_group(0, &cf_bg, &[]);
+                        pass.dispatch_workgroups(wg, 1, 1);
+                    }
+                    g.encode_step(&mut enc);
                 }
             }
             ctx.queue().submit([enc.finish()]);
@@ -974,8 +1138,8 @@ impl GpuGridState {
             done = batch_end;
         }
 
-        // Update C-field once after all steps.
-        {
+        // Non-interleaved path: update C once after all steps.
+        if gem.is_none() {
             let mut enc = dev.create_command_encoder(&Default::default());
             {
                 let mut pass = enc.begin_compute_pass(&Default::default());
@@ -988,8 +1152,9 @@ impl GpuGridState {
         }
 
         log::info!(
-            "AC FDTD: {n_steps} steps × dt={:.3e}s, f={:.2}Hz, I₀={:.3}A",
-            dt, frequency_hz, current_a
+            "AC FDTD: {n_steps} steps × dt={:.3e}s, f={:.2}Hz, I₀={:.3}A{}",
+            dt, frequency_hz, current_a,
+            if gem.is_some() { "  [SLW-GEM interleaved]" } else { "" }
         );
         Ok(())
     }
@@ -999,31 +1164,43 @@ impl GpuGridState {
     /// Must be called AFTER `run_fdtd()` so that `c_fld` and `c_fld_prev`
     /// are populated from the EM solve.  Runs the same number of steps
     /// as the EM solve so the sim times match.
-    pub fn run_gem_fdtd(
-        &self,
-        ctx:     &GpuContext,
-        grid:    &YeeGrid,
-        dt:      f32,
-        n_steps: u32,
-        kappa_g: f32,
-    ) -> Result<(), SolverError> {
-        if n_steps == 0 || kappa_g == 0.0 { return Ok(()); }
+    /// Snapshot the current EED potentials (a_vec → a_src, c_fld → c_src) for
+    /// use as the KK-direct GEM coupling source.
+    ///
+    /// *When* to call this depends on the drive (ORC-x7m):
+    ///   • Unsustained DC: call BEFORE the FDTD loop — it captures the static
+    ///     Biot-Savart A/C while they're physical, before the loop radiates the
+    ///     un-fed field to zero.
+    ///   • Sustained AC: call AFTER the FDTD loop — the evolved a_vec/c_fld then
+    ///     carry the genuine dynamical EED scalar C (the deleted 7th DOF), which
+    ///     the static pre-loop snapshot (Coulomb gauge, C ≈ 0) would discard.
+    pub fn snapshot_gem_sources(&self, ctx: &GpuContext) {
+        let dev = ctx.device();
+        let scalar_bytes = (self.scalar_len() * 4) as u64;
+        let vec_bytes    = (self.vec_len() * 4) as u64;
+        let mut enc = dev.create_command_encoder(&Default::default());
+        enc.copy_buffer_to_buffer(&self.a_vec, 0, &self.a_src, 0, vec_bytes);
+        enc.copy_buffer_to_buffer(&self.c_fld, 0, &self.c_src, 0, scalar_bytes);
+        ctx.queue().submit([enc.finish()]);
+        dev.poll(wgpu::MaintainBase::Wait);
+    }
 
+    /// Build the interleaved SLW-GEM stepper (ORC-j07).  Mirrors the pipeline /
+    /// bind-group wiring of `run_gem_fdtd`, but returns a reusable stepper that
+    /// the EM FDTD loop dispatches one step at a time (after each `update_c`) so
+    /// the gravitational sector co-evolves with the live C instead of a frozen
+    /// post-EM snapshot.
+    fn gem_stepper(&self, ctx: &GpuContext, grid: &YeeGrid, dt: f32, kappa_g: f32) -> GemStepper {
         let dev = ctx.device();
         let n1  = self.n1;
 
         let gem_params = GemParamsGpu { dx: grid.dx as f32, dt, n1, kappa_g };
         let gem_params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label:    Some("gem_params"),
+            label:    Some("gem_params_interleaved"),
             contents: bytes_of(&gem_params),
             usage:    wgpu::BufferUsages::UNIFORM,
         });
 
-        // Explicit bind group layout shared by both pipelines.
-        // wgpu auto-layout (layout: None) derives per-entry-point — pos_gem
-        // doesn't read c_fld/c_fld_prev so its auto-layout has only 5 slots,
-        // causing a mismatch when we supply all 7 entries.  An explicit shared
-        // layout avoids the discrepancy.
         let storage_rw = wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Storage { read_only: false },
             has_dynamic_offset: false, min_binding_size: None,
@@ -1039,7 +1216,7 @@ impl GpuGridState {
         let cs = wgpu::ShaderStages::COMPUTE;
 
         let bgl = dev.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("gem_bgl"),
+            label: Some("gem_bgl_interleaved"),
             entries: &[
                 wgpu::BindGroupLayoutEntry { binding: 0, visibility: cs, ty: storage_rw, count: None },
                 wgpu::BindGroupLayoutEntry { binding: 1, visibility: cs, ty: storage_rw, count: None },
@@ -1050,28 +1227,23 @@ impl GpuGridState {
                 wgpu::BindGroupLayoutEntry { binding: 6, visibility: cs, ty: uniform,    count: None },
             ],
         });
-        let pipeline_layout = dev.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label:                Some("gem_pipeline_layout"),
-            bind_group_layouts:   &[&bgl],
-            push_constant_ranges: &[],
+        let pl = dev.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("gem_pl_interleaved"), bind_group_layouts: &[&bgl], push_constant_ranges: &[],
         });
-
-        let vel_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("gem_vel"), layout: Some(&pipeline_layout), module: &ctx.shaders().fdtd_gem,
-            entry_point: "vel_gem",
-            compilation_options: Default::default(), cache: None,
+        let vel_phi = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("gem_vel_phi_il"), layout: Some(&pl), module: &ctx.shaders().fdtd_gem,
+            entry_point: "vel_gem_phi", compilation_options: Default::default(), cache: None,
         });
-
-        let pos_pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("gem_pos"), layout: Some(&pipeline_layout), module: &ctx.shaders().fdtd_gem,
-            entry_point: "pos_gem",
-            compilation_options: Default::default(), cache: None,
+        let vel_a = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("gem_vel_a_il"), layout: Some(&pl), module: &ctx.shaders().fdtd_gem,
+            entry_point: "vel_gem_a", compilation_options: Default::default(), cache: None,
         });
-
-        // Single bind group covers all 7 slots; shared by both pipelines.
-        let gem_bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
-            label:   Some("gem_bg"),
-            layout:  &bgl,
+        let pos = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("gem_pos_il"), layout: Some(&pl), module: &ctx.shaders().fdtd_gem,
+            entry_point: "pos_gem", compilation_options: Default::default(), cache: None,
+        });
+        let bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gem_bg_il"), layout: &bgl,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: self.phi_g.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: self.a_g_vec.as_entire_binding() },
@@ -1082,35 +1254,190 @@ impl GpuGridState {
                 wgpu::BindGroupEntry { binding: 6, resource: gem_params_buf.as_entire_binding() },
             ],
         });
-
         let wg = (n1 * n1 * n1).div_ceil(256);
 
+        GemStepper { vel_phi, vel_a, pos, bg, wg, _params: gem_params_buf }
+    }
+
+    /// DEPRECATED post-hoc SLW-GEM stepper (frozen-snapshot ∂C/∂t — see ORC-j07).
+    /// Kept as a fallback for forced-C studies; production solves interleave via
+    /// [`GemStepper`] inside the EM FDTD loop instead.
+    #[allow(dead_code)]
+    pub fn run_gem_fdtd(
+        &self,
+        ctx:     &GpuContext,
+        grid:    &YeeGrid,
+        dt:      f32,
+        n_steps: u32,
+        kappa_g: f32,
+    ) -> Result<(), SolverError> {
+        if n_steps == 0 || kappa_g == 0.0 { return Ok(()); }
+
+        let dev     = ctx.device();
+        let stepper = self.gem_stepper(ctx, grid, dt, kappa_g);
+
         // Batched GEM FDTD — same 32-step batch strategy to avoid Metal timeout.
+        // NOTE: this steps against a frozen c_fld/c_fld_prev (whatever the caller
+        // left in place); the production path interleaves GemStepper inside the
+        // EM loop instead, so ∂C/∂t is per-step correct (ORC-j07).
         const STEP_BATCH_GEM: u32 = 32;
         let mut done = 0u32;
         while done < n_steps {
             let batch = STEP_BATCH_GEM.min(n_steps - done);
             let mut enc = dev.create_command_encoder(&Default::default());
             for _ in 0..batch {
-                {
-                    let mut pass = enc.begin_compute_pass(&Default::default());
-                    pass.set_pipeline(&vel_pipeline);
-                    pass.set_bind_group(0, &gem_bg, &[]);
-                    pass.dispatch_workgroups(wg, 1, 1);
-                }
-                {
-                    let mut pass = enc.begin_compute_pass(&Default::default());
-                    pass.set_pipeline(&pos_pipeline);
-                    pass.set_bind_group(0, &gem_bg, &[]);
-                    pass.dispatch_workgroups(wg, 1, 1);
-                }
+                stepper.encode_step(&mut enc);
             }
             ctx.queue().submit([enc.finish()]);
             dev.poll(wgpu::MaintainBase::Wait);
             done += batch;
         }
 
-        log::info!("GEM FDTD: {n_steps} steps, κ_G={:.3e}", kappa_g);
+        log::info!("GEM FDTD (fallback, frozen-C): {n_steps} steps, κ_G={:.3e}", kappa_g);
+        Ok(())
+    }
+
+    // ── Phase 4 (KK-direct): algebraic Kaluza-Klein GEM coupling ─────────────
+
+    /// Apply the Kaluza-Klein *direct algebraic* GEM coupling (Wilhelm §4.10):
+    ///     Φ_g = κ_G · C,   A_g = κ_G · A
+    /// from the snapshotted static EED potentials (`c_src`, `a_src`).
+    ///
+    /// This is a pointwise assignment — unconditionally stable, dt-independent,
+    /// and responsive to *static* configurations (unlike the SLW derivative
+    /// channel in `run_gem_fdtd`).  `B_g = ∇×A_g` is recovered downstream by the
+    /// derive_gem kernel.
+    ///
+    /// `additive = false` overwrites Φ_g / A_g (pure KkDirect).
+    /// `additive = true`  accumulates on top of an existing FDTD result (Both).
+    pub fn run_gem_kk_direct(
+        &self,
+        ctx:      &GpuContext,
+        kappa_g:  f32,
+        additive: bool,
+    ) -> Result<(), SolverError> {
+        if kappa_g == 0.0 { return Ok(()); }
+
+        let dev = ctx.device();
+        let n1  = self.n1;
+
+        let params = KkParamsGpu {
+            n1,
+            kappa_g,
+            additive: u32::from(additive),
+            _pad: 0,
+        };
+        let params_buf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:    Some("gem_kk_params"),
+            contents: bytes_of(&params),
+            usage:    wgpu::BufferUsages::UNIFORM,
+        });
+
+        let pipeline = dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label:               Some("gem_kk_direct"),
+            layout:              None,
+            module:              &ctx.shaders().gem_kk_direct,
+            entry_point:         "kk_direct",
+            compilation_options: Default::default(),
+            cache:               None,
+        });
+
+        let bg = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+            label:   Some("gem_kk_bg"),
+            layout:  &pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.phi_g.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.a_g_vec.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: self.a_src.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: self.c_src.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: params_buf.as_entire_binding() },
+            ],
+        });
+
+        let wg = (n1 * n1 * n1).div_ceil(256);
+        let mut enc = dev.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.dispatch_workgroups(wg, 1, 1);
+        }
+        ctx.queue().submit([enc.finish()]);
+        dev.poll(wgpu::MaintainBase::Wait);
+
+        log::info!("GEM KK-direct: κ_G={:.3e}, additive={}", kappa_g, additive);
+        Ok(())
+    }
+
+    /// Elliptic (Poisson) KK coupling — the alternative reading of the
+    /// Kaluza-Klein identification (ORC-vzp).
+    ///
+    /// Where [`run_gem_kk_direct`] makes a *pointwise* copy (Φ_g = κ_G·C,
+    /// A_g = κ_G·A, hence B_g = κ_G·B exactly), this solves the field equations
+    ///
+    /// ```text
+    /// ∇²Φ_g = −κ_G·C,      ∇²A_g = −κ_G·A      (component-wise)
+    /// ```
+    ///
+    /// on the grid with Dirichlet (zero-boundary) conditions via the PCG solver.
+    /// The inverse Laplacian *smooths* the κ_G·C / κ_G·A sources, so the
+    /// resulting Φ_g, A_g (and B_g = ∇×A_g) differ in shape and magnitude from
+    /// the algebraic copy — letting the two physical readings be compared.
+    ///
+    /// Sources come from the static snapshot (`c_src`, `a_src`) just like the
+    /// algebraic channel.  Φ_g lands in `phi_g`; A_g lands in `a_g_vec`
+    /// (solved one Cartesian component at a time through a scalar scratch
+    /// buffer, then scattered back into the stride-4 vector layout).
+    pub fn run_gem_poisson(
+        &self,
+        ctx:      &GpuContext,
+        grid:     &YeeGrid,
+        kappa_g:  f32,
+        tol:      f32,
+        max_iter: u32,
+    ) -> Result<(), SolverError> {
+        if kappa_g == 0.0 { return Ok(()); }
+
+        let dev    = ctx.device();
+        let n      = self.scalar_len();
+        let kappa  = kappa_g as f64;
+
+        // ── Φ_g: ∇²Φ_g = −κ_G·C ────────────────────────────────────────────
+        // Solver convention: (−∇²+α²)u = −rhs_data ⇒ at α²=0, ∇²u = rhs_data.
+        // We want ∇²Φ_g = −κ_G·C, so rhs_data = −κ_G·C.
+        let c_src = self.readback(ctx, &self.c_src, n)?;
+        let rhs_phi: Vec<f32> =
+            c_src.iter().map(|&c| (-(kappa) * c as f64) as f32).collect();
+        self.run_cg_phi(ctx, grid, &rhs_phi, 0.0, tol, max_iter, &self.phi_g)?;
+
+        // ── A_g: ∇²A_g = −κ_G·A, one Cartesian component at a time ─────────
+        let a_src = self.readback(ctx, &self.a_src, self.vec_len())?; // stride-4
+
+        // Scalar scratch target for each component solve (zeroed by run_cg_phi).
+        let scratch = dev.create_buffer(&wgpu::BufferDescriptor {
+            label:              Some("gem_poisson_ag_scalar"),
+            size:               (n * 4) as u64,
+            usage:              wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut a_g_cpu = vec![0.0f32; self.vec_len()]; // [Agx,Agy,Agz,0] per vertex
+        for comp in 0..3usize {
+            let rhs_comp: Vec<f32> = (0..n)
+                .map(|i| (-(kappa) * a_src[i * 4 + comp] as f64) as f32)
+                .collect();
+            self.run_cg_phi(ctx, grid, &rhs_comp, 0.0, tol, max_iter, &scratch)?;
+            let sol = self.readback(ctx, &scratch, n)?;
+            for i in 0..n {
+                a_g_cpu[i * 4 + comp] = sol[i];
+            }
+        }
+        ctx.queue().write_buffer(&self.a_g_vec, 0, bytemuck::cast_slice(&a_g_cpu));
+        dev.poll(wgpu::MaintainBase::Wait);
+
+        log::info!("GEM KK-Poisson: κ_G={:.3e}, tol={:.1e}, max_iter={}", kappa_g, tol, max_iter);
         Ok(())
     }
 
@@ -1357,21 +1684,31 @@ impl GpuGridState {
     /// Replaces `run_jacobi_phi()` for large grids (better convergence).
     /// Four GPU passes per iteration; two tiny CPU readbacks (~4KB each).
     ///
-    /// Stores the solution in `self.phi`.  Initial guess: zero.
+    /// Stores the solution in the `solution` buffer (zeroed on entry, so the
+    /// initial guess is always x₀ = 0).  Pass `&self.phi` for the EED scalar
+    /// solve, or a GEM scalar target (`&self.phi_g`, a scratch buffer for A_g
+    /// components) for the Poisson KK coupling.
     pub fn run_cg_phi(
-        &mut self,
+        &self,
         ctx:       &GpuContext,
         grid:      &YeeGrid,
         rhs_data:  &[f32],
         alpha_sq:  f32,
         tol:       f32,   // relative convergence: stop when ‖r‖² < tol²·‖b‖²
         max_iter:  u32,
+        solution:  &wgpu::Buffer, // scalar (n1³) target; zeroed (x₀ = 0) on entry
     ) -> Result<(), SolverError> {
         if max_iter == 0 { return Ok(()); }
 
         let dev      = ctx.device();
         let n1       = self.n1;
         let bytes    = (self.scalar_len() as u64) * 4;
+
+        // The PCG below assumes the initial guess x₀ = 0 (it seeds r₀ = b and
+        // accumulates x += α·p).  Zero the target so a stale/ reused buffer
+        // (e.g. the A_g scalar scratch reused across 3 components) can't poison
+        // the result.
+        ctx.queue().write_buffer(solution, 0, bytemuck::cast_slice(&vec![0.0f32; self.scalar_len()]));
         let wg_count = (n1 * n1 * n1).div_ceil(256);
         let n_wg     = wg_count as usize;
         let part_bytes = (n_wg as u64) * 4;
@@ -1503,7 +1840,7 @@ impl GpuGridState {
             label:   Some("cg_xr_bg"),
             layout:  &xr_pl.get_bind_group_layout(0),
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.phi.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 0, resource: solution.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: r_buf.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 2, resource: p_buf.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: ap_buf.as_entire_binding() },

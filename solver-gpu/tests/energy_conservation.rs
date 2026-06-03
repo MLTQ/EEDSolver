@@ -95,7 +95,7 @@ async fn test_energy_conservation_vacuum_fdtd() {
     let n_steps = 20_u32;
     let mut e_sum = 0.0_f64;
     for step in 1..=n_steps {
-        gstate.run_fdtd_sponge(&ctx, &grid, dt, 1, 0.0, Some(0.0)).unwrap();
+        gstate.run_fdtd_sponge(&ctx, &grid, dt, 1, 0.0, Some(0.0), None).unwrap();
         let e = scalar_wave_energy(&ctx, &gstate, &grid);
         assert!(e.is_finite() && e > 0.0, "Energy non-finite/non-positive at step {step}");
         let pct = (e - e0) / e0 * 100.0;

@@ -73,14 +73,14 @@ async fn test_c_field_wave_equation() {
     upload_scalar(&ctx, &gstate.phi, &phi_init);
 
     // 5-step warmup (no sponge) so C = phi_vel/c² becomes non-trivial.
-    gstate.run_fdtd_sponge(&ctx, &grid, dt, 5, 0.0, Some(0.0)).unwrap();
+    gstate.run_fdtd_sponge(&ctx, &grid, dt, 5, 0.0, Some(0.0), None).unwrap();
 
     // Record C at three consecutive time levels k-1, k, k+1.
     // run_fdtd updates c_fld = div(A) + phi_vel/c² = phi_vel/c² (A≡0).
     let c_km1 = gstate.readback(&ctx, &gstate.c_fld, gstate.scalar_len()).unwrap();
-    gstate.run_fdtd_sponge(&ctx, &grid, dt, 1, 0.0, Some(0.0)).unwrap();
+    gstate.run_fdtd_sponge(&ctx, &grid, dt, 1, 0.0, Some(0.0), None).unwrap();
     let c_k   = gstate.readback(&ctx, &gstate.c_fld, gstate.scalar_len()).unwrap();
-    gstate.run_fdtd_sponge(&ctx, &grid, dt, 1, 0.0, Some(0.0)).unwrap();
+    gstate.run_fdtd_sponge(&ctx, &grid, dt, 1, 0.0, Some(0.0), None).unwrap();
     let c_kp1 = gstate.readback(&ctx, &gstate.c_fld, gstate.scalar_len()).unwrap();
 
     let c_rms_k: f64 = c_k.iter().map(|v| (*v as f64).powi(2)).sum::<f64>().sqrt()

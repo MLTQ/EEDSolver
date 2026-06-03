@@ -185,14 +185,67 @@ pub struct GemParams {
     /// Enable Li-Torr gravitomagnetic London moment for superconducting entities.
     /// When true, rotating superconducting entities source B_g = -(2mₑ/e)·ω.
     pub li_torr_mode:  bool,
+    /// How the EED sector sources the GEM sector.  See [`CouplingMode`].
+    /// Defaults to `KkDirect` — the algebraic Kaluza-Klein identification,
+    /// which (unlike the derivative SLW-mediated form) responds to *static*
+    /// potential configurations such as the Aharonov-Bohm toroid.
+    #[serde(default)]
+    pub coupling_mode: CouplingMode,
 }
 
 impl Default for GemParams {
     fn default() -> Self {
         Self {
-            enabled:      false,
-            kappa_g:      0.0,
-            li_torr_mode: false,
+            enabled:       false,
+            kappa_g:       0.0,
+            li_torr_mode:  false,
+            coupling_mode: CouplingMode::default(),
+        }
+    }
+}
+
+/// Selects how the EED potentials source the GEM gravitational sector.
+///
+/// Wilhelm 2026 (§4.10 / Fig. 9) identifies the EM four-potential A_μ with the
+/// off-diagonal Kaluza-Klein 5D metric component — a *direct algebraic*
+/// identification (Φ_g ∝ ∇·A = C, A_g ∝ A).  The Stueckelberg/SLW reading
+/// instead couples through derivatives of C (∂C/∂t, ∇C), which is structurally
+/// blind to static potentials in field-free regions (confirmed by ORC-0km).
+///
+/// The two channels make different physical claims, so the mode is selectable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CouplingMode {
+    /// Algebraic KK identification: Φ_g ← κ_G·C, A_g ← κ_G·A.
+    /// Responds to static configurations (the paper's headline AB setup).
+    KkDirect,
+    /// Derivative SLW-mediated coupling: Φ_g ← κ_G·∂C/∂t, A_g ← κ_G·∇C.
+    /// Wave/transient sourced; blind to static A (legacy behaviour).
+    SlwMediated,
+    /// Both KK-direct + SLW channels summed.
+    Both,
+    /// Elliptic (Poisson) KK coupling: solve ∇²Φ_g = −κ_G·C and
+    /// ∇²A_g = −κ_G·A on the grid (Dirichlet, PCG).  Unlike the algebraic
+    /// KkDirect — which is a pointwise copy (B_g = κ_G·B exactly) — the Poisson
+    /// model treats κ_G·C, κ_G·A as *sources* whose potentials are smoothed by
+    /// the inverse Laplacian, so B_g ≠ κ_G·B in general.  Provided to compare
+    /// the two readings of the KK identification (ORC-vzp).
+    KkPoisson,
+}
+
+impl Default for CouplingMode {
+    fn default() -> Self { CouplingMode::KkDirect }
+}
+
+impl CouplingMode {
+    /// GPU encoding consumed by `fdtd_gem.wgsl` (`coupling_mode` uniform field).
+    /// 0 = KkDirect, 1 = SlwMediated, 2 = Both, 3 = KkPoisson.
+    pub fn as_u32(self) -> u32 {
+        match self {
+            CouplingMode::KkDirect    => 0,
+            CouplingMode::SlwMediated => 1,
+            CouplingMode::Both        => 2,
+            CouplingMode::KkPoisson   => 3,
         }
     }
 }

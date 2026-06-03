@@ -6,12 +6,17 @@
 //   C = ∇·A + (1/c²)·∂φ/∂t
 //
 // This is Maxwell's "deleted" seventh degree of freedom.  Under Lorenz gauge
-// C=0 by definition; in EED (potential-primary, no gauge fixing) C is
-// dynamical and satisfies □C = ∂μJμ.
+// C=0 by definition; in EED (potential-primary, no gauge fixing) C is dynamical.
 //
-// In vacuum (∂μJμ=0), C satisfies the free wave equation □C=0.
-// Initial conditions C=0 (static Biot-Savart) means C=0 persists for
-// closed-loop coils — until a perturbation or open-circuit source injects it.
+// NOTE on □C = µ₀∂μJμ: that clean identity is the *decoupled* (van Vlaenderen)
+// EED result, where □φ=ρ/ε₀ and □A=µ₀J.  This solver instead evolves the
+// CANONICAL coupled, longitudinally-propagating potentials (fdtd_em.wgsl;
+// FIELD_THEORY.md 2026-05-29), so C does NOT obey that identity exactly — but it
+// is still dynamical and still sourced by ∂μJμ≠0 at open-circuit terminations.
+// C is computed here as a diagnostic from the evolved (φ, A); its dominant ~62%
+// is the longitudinal ∇·A, which radiates at c under the chosen A-equation.
+// Initial C=0 (static Biot-Savart) persists for closed-loop coils until an
+// open-circuit / time-varying source (∇·J ≠ 0 at the tips) injects it.
 //
 // Bindings:
 //   0  a_vec    storage read   n1³ × 4·f32

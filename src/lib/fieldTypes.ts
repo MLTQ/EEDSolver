@@ -87,6 +87,17 @@ export interface EedParams {
   gamma: number;
 }
 
+/**
+ * GEM κ_G coupling channel (Wilhelm §4.10).
+ *  - `kk_direct`    — algebraic Kaluza-Klein identification Φ_g=κ_G·C, A_g=κ_G·A.
+ *                     Responds to *static* configurations (e.g. the DC toroid's
+ *                     Aharonov-Bohm A); works in any mode; unconditionally stable.
+ *  - `slw_mediated` — derivative coupling κ_G·∂C/∂t, κ_G·∇C.  Time-domain only;
+ *                     blind to static configs (ORC-0km).
+ *  - `both`         — SLW FDTD first, then KK-direct accumulated on top.
+ */
+export type CouplingMode = "kk_direct" | "slw_mediated" | "both";
+
 /** GEM (gravitoelectromagnetic) sector parameters. */
 export interface GemParams {
   enabled:      boolean;
@@ -94,6 +105,8 @@ export interface GemParams {
   kappa_g:      number;
   /** Enable Li-Torr gravitomagnetic London moment. */
   li_torr_mode: boolean;
+  /** Which κ_G coupling channel to use.  Default "kk_direct". */
+  coupling_mode: CouplingMode;
 }
 
 /** Solve mode — tagged by `mode` field (matches Rust serde tag). */
@@ -334,7 +347,7 @@ export function defaultSolveRequest(): SolveRequest {
   return {
     entities: [defaultCoilEntity()],
     eed: { alpha: 0.0, beta: 0.1, gamma: 1.0 },
-    gem: { enabled: false, kappa_g: 0.0, li_torr_mode: false },
+    gem: { enabled: false, kappa_g: 0.0, li_torr_mode: false, coupling_mode: "kk_direct" },
     solver: {
       mode:            { mode: "static" },
       cells_per_axis:  64,

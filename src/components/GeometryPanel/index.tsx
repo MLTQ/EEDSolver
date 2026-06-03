@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import type {
-  CoilEntity, CoilParams, CoilType,
+  CoilEntity, CoilParams, CoilType, CouplingMode,
   EedParams, GemParams, HolonomyPath,
   SolveRequest, SolverConfig, SolverMode,
 } from "../../lib/fieldTypes";
@@ -407,9 +407,35 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
         />
         {request.gem.enabled && (
           <>
+            {/* ── κ_G coupling channel (Wilhelm §4.10) ──────────────── */}
+            <div className="flex flex-col gap-0.5">
+              <span className="text-xs text-slate-400">Coupling channel</span>
+              <div className="flex gap-1">
+                {COUPLING_MODES.map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    onClick={() => setGem({ coupling_mode: mode })}
+                    className={`flex-1 py-0.5 rounded text-xs border transition-colors
+                      ${request.gem.coupling_mode === mode
+                        ? "bg-emerald-900/40 border-emerald-600/50 text-emerald-300"
+                        : "border-rim text-slate-400 hover:border-white/20"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="text-[11px] text-slate-600 leading-relaxed mt-0.5">
+                {request.gem.coupling_mode === "kk_direct"
+                  ? "Algebraic A_g = κ_G·A (Kaluza-Klein). Responds to static configs; any mode."
+                  : request.gem.coupling_mode === "slw_mediated"
+                  ? "Derivative κ_G·∂C/∂t, κ_G·∇C. Time-domain only; blind to static fields."
+                  : "SLW wave coupling + KK-direct accumulated on top."}
+              </div>
+            </div>
             {/* ── GEM config advisories ─────────────────────────────── */}
             {(() => {
               const isTimeDomain = request.solver.mode.mode === "time_domain";
+              const needsFdtd    = request.gem.coupling_mode !== "kk_direct";
               const hasAcSource  = request.entities.some(e => {
                 if ((e.coil.frequency_hz ?? 0) <= 0) return false;
                 // Open helix is voltage-driven; others use current_A.
@@ -425,17 +451,18 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
               const gammaOk = request.eed.gamma > 0;
               const kappaSmall = request.gem.kappa_g > 0 && request.gem.kappa_g < 1e-6;
 
-              if (!isTimeDomain) {
+              if (needsFdtd && !isTimeDomain) {
                 return (
                   <p className="text-[11px] text-amber-500/80 leading-relaxed">
-                    ⚠ GEM requires FDTD (time-domain) mode — enable it in the Mode section.
+                    ⚠ The SLW-mediated channel requires FDTD (time-domain) mode —
+                    enable it in the Mode section, or switch to KK-direct.
                   </p>
                 );
               }
-              if (!hasAcSource || !hasOpenSource || !gammaOk) {
+              if (needsFdtd && (!hasAcSource || !hasOpenSource || !gammaOk)) {
                 return (
                   <p className="text-[11px] text-amber-500/80 leading-relaxed">
-                    ℹ Φ_g needs a C-field source: use AC open helix with γ {'>'} 0
+                    ℹ SLW Φ_g needs a C-field source: use AC open helix with γ {'>'} 0
                     and non-zero voltage. Closed DC loops have C ≡ 0.
                   </p>
                 );
@@ -504,6 +531,14 @@ const KAPPA_PRESETS: [string, number][] = [
   ["L-T",  1.14e-11],
   ["Exp",  1.0],        // amplified ×10¹¹ — exploratory / visualisation only
   ["off",  0.0],
+];
+
+// ── GEM coupling channels (Wilhelm §4.10) ──────────────────────────────────────
+
+const COUPLING_MODES: [CouplingMode, string][] = [
+  ["kk_direct",    "KK-direct"],
+  ["slw_mediated", "SLW"],
+  ["both",         "Both"],
 ];
 
 // ── Sub-components ────────────────────────────────────────────────────────────

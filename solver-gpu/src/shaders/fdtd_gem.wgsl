@@ -9,15 +9,29 @@
 //   ∂²Φ_g/∂t² = c²∇²Φ_g + 4πG·ρ_m  +  κ_G · ∂C/∂t
 //   ∂²A_g/∂t² = c²∇²A_g − ∇(∂Φ_g/∂t) − (4πG/c)J_m  +  κ_G · ∇C
 //
-// The EED→GEM coupling (κ_G terms) is the key novel physics:
+// This is the SLW-mediated (derivative) coupling channel:
 //   - ∂C/∂t  sources  Φ_g  (temporal C oscillations drive gravitational waves)
 //   - ∇C     sources  A_g  (spatial C gradients drive gravitomagnetic field)
+//
+// It is *blind to static configurations* (∂C/∂t = 0, ∇C ≈ 0 for a DC toroid —
+// confirmed by ORC-0km).  The algebraic Kaluza-Klein channel (Φ_g ← κ_G·C,
+// A_g ← κ_G·A), which DOES respond to static potentials, lives in the separate
+// `gem_kk_direct.wgsl` kernel (ORC-bn6) — it is a pointwise assignment, not a
+// wave source, and is selected via `CouplingMode::KkDirect` (the default).
 //
 // # κ_G guide
 //   KK prediction : G/c² ≈ 7.4e-28  m/kg    (Kaluza-Klein)
 //   Li-Torr       : 2mₑ/e ≈ 1.14e-11         (superconductor London moment)
 //
-// Same two-pass leapfrog as fdtd_em.wgsl (vel_gem, pos_gem).
+// THREE-pass leapfrog, Gauss-Seidel-ordered exactly like fdtd_em.wgsl (ORC-4eg,
+// ORC-21g): vel_gem_phi → vel_gem_a → pos_gem.  The φ_g↔A_g cross-coupling
+// (c²·div(A_g_vel) in the Φ_g eq, ∇(∂Φ_g/∂t) in the A_g eq) is the same skew
+// longitudinal sub-update that is unconditionally unstable if both read the OLD
+// velocities; updating phi_g_vel first and feeding the FRESH value into the A_g
+// pass makes it conditionally stable.  The ∇(∂Φ_g/∂t) term carries NO c² (the
+// temporal part of c²∇C_g is c²-free) — a spurious c² there gives β≈5e8 → NaN.
+// Both passes need separate GPU dispatches (vel_gem_a reads phi_g_vel at
+// neighbour cells that vel_gem_phi writes).
 //
 // Bindings:
 //   0  phi_g      storage read_write   n1³ × f32
@@ -76,7 +90,7 @@ fn c_at(ix: i32, iy: i32, iz: i32, n: i32) -> f32 {
 // ── Pass 1: GEM velocity update ───────────────────────────────────────────────
 
 @compute @workgroup_size(256)
-fn vel_gem(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn vel_gem_phi(@builtin(global_invocation_id) gid: vec3<u32>) {
     let n    = i32(params.n1);
     let flat = gid.x;
     if flat >= u32(n*n*n) { return; }
@@ -119,6 +133,28 @@ fn vel_gem(@builtin(global_invocation_id) gid: vec3<u32>) {
     // (The 4πG·ρ_m source is zero for vacuum; add in Phase 5 for mass distributions.)
     let acc_pg = C2 * (lap_pg - div_agv) + kappa * dC_dt;
     phi_g_vel[flat] += dt * acc_pg;
+}
+
+// Pass 1b: GEM A_g-velocity update — reads the FRESHLY-updated phi_g_vel
+// (Gauss-Seidel, ORC-21g).  The ∇(∂Φ_g/∂t) cross-term carries NO c² (a spurious
+// c² gives β≈5e8 at CFL → NaN).  Must run AFTER vel_gem_phi.
+@compute @workgroup_size(256)
+fn vel_gem_a(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let n    = i32(params.n1);
+    let flat = gid.x;
+    if flat >= u32(n*n*n) { return; }
+
+    let ix = i32(flat) % n;
+    let iy = (i32(flat) / n) % n;
+    let iz = i32(flat) / (n*n);
+
+    if ix == 0 || ix == n-1 || iy == 0 || iy == n-1 || iz == 0 || iz == n-1 { return; }
+
+    let dx      = params.dx;
+    let dt      = params.dt;
+    let kappa   = params.kappa_g;
+    let inv2dx  = 0.5 / dx;
+    let inv_dx2 = 1.0 / (dx * dx);
 
     // ── Laplacian of A_g components ───────────────────────────────────────────
     let ag_base = flat * 4u;
@@ -155,9 +191,9 @@ fn vel_gem(@builtin(global_invocation_id) gid: vec3<u32>) {
     let grad_C_z = (c_at(ix,  iy,  iz+1,n) - c_at(ix,  iy,  iz-1,n)) * inv2dx;
 
     // ── A_g acceleration = c²∇²A_g − c²·∇(∂Φ_g/∂t) + κ_G·∇C ───────────────
-    a_g_vel[ag_base]      += dt * (C2*(lap_agx - gpgv_x) + kappa*grad_C_x);
-    a_g_vel[ag_base + 1u] += dt * (C2*(lap_agy - gpgv_y) + kappa*grad_C_y);
-    a_g_vel[ag_base + 2u] += dt * (C2*(lap_agz - gpgv_z) + kappa*grad_C_z);
+    a_g_vel[ag_base]      += dt * (C2*lap_agx - gpgv_x + kappa*grad_C_x);
+    a_g_vel[ag_base + 1u] += dt * (C2*lap_agy - gpgv_y + kappa*grad_C_y);
+    a_g_vel[ag_base + 2u] += dt * (C2*lap_agz - gpgv_z + kappa*grad_C_z);
 }
 
 // ── Pass 2: GEM position update ───────────────────────────────────────────────

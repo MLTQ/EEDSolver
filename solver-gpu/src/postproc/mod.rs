@@ -36,12 +36,20 @@ pub fn extract_slices(
     requests.iter().map(|req| extract_slice(ctx, gstate, grid, req)).collect()
 }
 
+/// Count non-finite (NaN/Inf) entries in a field buffer.  Used to surface
+/// solver divergence (ORC-fwe) instead of letting the `v > m` max-fold silently
+/// swallow NaN/Inf and report a diverged field as max=0.
+fn count_non_finite(data: &[f32]) -> usize {
+    data.iter().filter(|v| !v.is_finite()).count()
+}
+
 /// Compute field maxima for all populated fields.
 /// Phase 1/2/5: |B|, |A|, C, φ, Φ_g, |P|, u.
 pub fn compute_maxima(
-    ctx:    &GpuContext,
-    gstate: &GpuGridState,
-    grid:   &YeeGrid,
+    ctx:      &GpuContext,
+    gstate:   &GpuGridState,
+    grid:     &YeeGrid,
+    warnings: &mut Vec<String>,
 ) -> Result<Vec<FieldMaximum>, SolverError> {
     let n1 = gstate.n1;
     let dx = grid.dx as f32;
@@ -56,6 +64,32 @@ pub fn compute_maxima(
     let pmag_data    = gstate.readback(ctx, &gstate.poynting_mag, gstate.scalar_len())?;
     let udens_data   = gstate.readback(ctx, &gstate.energy_dens,  gstate.scalar_len())?;
 
+    // ORC-fwe: the max-folds below skip non-finite values (NaN/Inf fail every
+    // `v > m`), so a *diverged* field silently reduces to max=0 and is dropped
+    // from the maxima list — looking like "no field developed" rather than
+    // "the solver blew up".  This masked both the EED (ORC-4eg) and GEM
+    // (ORC-21g) instabilities.  Scan the evolved fields up front and surface any
+    // non-finiteness loudly, so a blowup can never again hide as an innocent 0.
+    {
+        let scan = |label: &str, data: &[f32], warnings: &mut Vec<String>| {
+            let nf = count_non_finite(data);
+            if nf > 0 {
+                let msg = format!(
+                    "{label}: {nf}/{} values non-finite (NaN/Inf) — the solver diverged; \
+                     maxima for evolved fields are unreliable (check dt/CFL, EED γ, κ_G).",
+                    data.len(),
+                );
+                log::warn!("{msg}");
+                warnings.push(msg);
+            }
+        };
+        scan("EED A (a_vec)",   &a_data,     warnings);
+        scan("EED C (c_fld)",   &c_data,     warnings);
+        scan("EED φ (phi)",     &phi_data,   warnings);
+        scan("GEM Φ_g (phi_g)", &phi_g_data, warnings);
+        scan("GEM B_g (b_g)",   &b_g_data,   warnings);
+    }
+
     let mut maxima = Vec::new();
 
     // Helper: max of |scalar|
@@ -65,10 +99,12 @@ pub fn compute_maxima(
             .fold((0.0_f32, 0usize), |(m, mi), (v, i)| if v > m { (v, i) } else { (m, mi) })
     };
 
-    // Helper: max of vec3 magnitude (stride-4 buffer)
+    // Helper: max of vec3 magnitude (stride-4 buffer).  Magnitude is accumulated
+    // in f64 (see vec3_mag_f64) so physical-κ_G GEM components (~1e-30) don't lose
+    // their squares to f32 underflow and collapse the magnitude to zero (ORC-gru).
     let vec_max = |data: &[f32]| -> (f32, usize) {
         data.chunks_exact(4).enumerate()
-            .map(|(i, c)| ((c[0]*c[0]+c[1]*c[1]+c[2]*c[2]).sqrt(), i))
+            .map(|(i, c)| (vec3_mag_f64(c), i))
             .fold((0.0_f32, 0usize), |(m, mi), (v, i)| if v > m { (v, i) } else { (m, mi) })
     };
 
@@ -165,11 +201,11 @@ pub fn extract_volume(
     let raw: Vec<f32> = match field {
         FieldName::BMagnitude => {
             let b = gstate.readback(ctx, &gstate.b_vec, gstate.vec_len())?;
-            b.chunks_exact(4).map(|c| (c[0]*c[0]+c[1]*c[1]+c[2]*c[2]).sqrt()).collect()
+            b.chunks_exact(4).map(vec3_mag_f64).collect()
         }
         FieldName::AMagnitude => {
             let a = gstate.readback(ctx, &gstate.a_vec, gstate.vec_len())?;
-            a.chunks_exact(4).map(|c| (c[0]*c[0]+c[1]*c[1]+c[2]*c[2]).sqrt()).collect()
+            a.chunks_exact(4).map(vec3_mag_f64).collect()
         }
         FieldName::CField => {
             gstate.readback(ctx, &gstate.c_fld, total)?
@@ -182,7 +218,7 @@ pub fn extract_volume(
         }
         FieldName::BgMagnitude => {
             let bg = gstate.readback(ctx, &gstate.b_g_vec, gstate.vec_len())?;
-            bg.chunks_exact(4).map(|c| (c[0]*c[0]+c[1]*c[1]+c[2]*c[2]).sqrt()).collect()
+            bg.chunks_exact(4).map(vec3_mag_f64).collect()
         }
         FieldName::PoyntingMag => {
             gstate.readback(ctx, &gstate.poynting_mag, total)?
@@ -377,6 +413,17 @@ fn extract_slice(
 // Slice helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Euclidean magnitude of a stride-4 vec3 chunk, accumulated in f64.
+///
+/// GEM fields at the physical κ_G ≈ 7.4e-28 have components ~1e-30: representable
+/// in f32, but their squares (~1e-60) underflow the f32 floor (~1e-38) and would
+/// silently flush the magnitude to zero.  Squaring in f64 (floor ~2e-308)
+/// preserves them; the resulting magnitude (~1e-30) fits back into f32.  (ORC-gru.)
+fn vec3_mag_f64(c: &[f32]) -> f32 {
+    let (x, y, z) = (c[0] as f64, c[1] as f64, c[2] as f64);
+    (x*x + y*y + z*z).sqrt() as f32
+}
+
 /// Extract a 2D slice of |vec3| magnitude from a stride-4 buffer (Vx,Vy,Vz,0).
 fn slice_magnitude(
     buf:   &[f32],
@@ -387,10 +434,10 @@ fn slice_magnitude(
     let n = n1 as usize;
     let l = layer as usize;
 
-    let mag = |base: usize| -> f32 {
-        let (x, y, z) = (buf[base], buf[base + 1], buf[base + 2]);
-        (x*x + y*y + z*z).sqrt()
-    };
+    // Magnitude accumulated in f64 (see vec3_mag_f64) so small-but-representable
+    // GEM components (~1e-30 at physical κ_G) don't lose their squares to f32
+    // underflow and collapse the magnitude to zero (ORC-gru).
+    let mag = |base: usize| -> f32 { vec3_mag_f64(&buf[base..base + 3]) };
 
     match axis {
         SliceAxis::Z => {
@@ -608,4 +655,24 @@ fn path_integral(
     };
 
     line_integral(a_data, n1, dx, extent, &points)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_non_finite;
+
+    #[test]
+    fn count_non_finite_catches_nan_and_inf() {
+        // All-finite → 0 (the healthy case).
+        assert_eq!(count_non_finite(&[1.0, -2.0, 0.0, 3.5]), 0);
+        assert_eq!(count_non_finite(&[]), 0);
+
+        // Mixed NaN/±Inf are all counted (the ORC-4eg / ORC-21g blowup signature).
+        let mixed = [1.0, f32::NAN, 2.0, f32::INFINITY, -3.0, f32::NEG_INFINITY];
+        assert_eq!(count_non_finite(&mixed), 3);
+
+        // A fully-diverged buffer: every entry non-finite (what the max-fold used
+        // to silently report as max=0).
+        assert_eq!(count_non_finite(&[f32::NAN; 8]), 8);
+    }
 }

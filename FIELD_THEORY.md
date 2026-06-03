@@ -104,6 +104,58 @@ When α > 0: scalar field has a characteristic decay length λ = 1/α (Yukawa-li
 - γ = 0.1 (weak coupling, perturbative regime)
 - μ₀ = 4π × 10⁻⁷ H/m
 
+### Time-Domain EED (FDTD, `solver-gpu`)
+
+The static weak forms above govern the legacy Python solver. The GPU solver
+(`solver-gpu`) evolves the **potential-primary, time-domain** EED system. It is
+a *distinct modeling commitment* from van Vlaenderen's decoupled EED, chosen
+deliberately (see Decision Log 2026-05-29). The equations of motion (vacuum,
+single coupling knob γ; γ=1 = full EED, γ=0 = Maxwell/Lorenz):
+
+```
+∂²φ/∂t² = c²∇²φ − γ·c²·∂(∇·A)/∂t
+∂²A/∂t² = c²∇²A − γ·∇(∂φ/∂t)        ( + c²µ₀J  source, injected separately )
+```
+
+The EED scalar (the "deleted 7th DOF") is a **diagnostic** of the evolved
+potentials:
+
+```
+C ≡ ∇·A + (1/c²)·∂φ/∂t            ( = ∂µAµ ; Lorenz gauge sets C=0 )
+```
+
+Gravitational (GEM) sector couples to C and A via the Kaluza-Klein map
+(`KkDirect`: Φ_g = κ_G·C, A_g = κ_G·A; or `KkPoisson`: ∇²Φ_g = −κ_G·C).
+
+**Two deliberate structural choices in the A-equation** (both physical for the
+deleted-DOF thesis, both load-bearing — do not "fix" without re-reading this):
+
+1. **The φ-coupling term ∇(∂φ/∂t) carries NO c².** From c²∇C = c²∇(∇·A) +
+   ∇(∂φ/∂t), the temporal piece is c²-free. A spurious c² there gives
+   β = dt·c²·γ·k ~ 5×10⁸ at CFL → unconditional NaN (ORC-4eg).
+
+2. **The −c²∇(∇·A) term is intentionally OMITTED.** Restoring it would complete
+   A to the textbook curl-curl form (c²∇²A − c²∇(∇·A) = −c²∇×∇×A), under which
+   the *longitudinal* ∇·A is non-propagating gauge. But the measured EED scalar
+   is **~62% longitudinal ∇·A** (AC open helix; the other ~38% is the temporal
+   (1/c²)∂φ/∂t half, same sign, from the γ cross-coupling). Keeping bare c²∇²A
+   lets that dominant half **radiate at c** to a detector — which is the entire
+   point of simulating a *physical, propagating* deleted DOF.
+
+**Stability:** the γ cross-coupling is a skew longitudinal sub-update
+([[1,−iβ],[−iβ,1]], |λ|=√(1+β²)>1 — unconditionally unstable if fused). Fixed by
+Gauss-Seidel ordering (update phi_vel, then a_vel from the *new* phi_vel →
+[[1,−iβ],[−iβ,1−β²]], conditionally stable for β≤2) plus a 0.5·CFL safety
+factor. See ORC-4eg.
+
+**Relation to the decoupled reading:** van Vlaenderen's EED gives □φ=ρ/ε₀,
+□A=µ₀J (cross-coupling cancels), making C obey □C=µ₀∂µJµ exactly but rendering
+the longitudinal sector non-propagating and the temporal half zero (no ρ is
+injected). That is a different, equally-derivable theory. Both cannot be true;
+**the experiment decides.** This solver commits to the coupled form because it
+*retains* the scalar/gravitational terms that the decoupled derivation
+evaporates — the terms this project exists to predict and test.
+
 ---
 
 ## Weak Forms (as implemented in `formulation.py`)
@@ -221,3 +273,41 @@ largest, so lab sensors can be positioned optimally. Key EED signatures to look 
 - **2026-05-25** Coil types expanded: solenoid, toroid (azimuthal winding),
   toroid_poloidal (poloidal winding — key EED test: confines B but not φ),
   flat_spiral, rodin (Rodin/Marko coil — figure-8 toroid winding).
+- **2026-05-29** Time-domain EED (`solver-gpu`) committed to the **coupled,
+  longitudinally-propagating** potential form (∂²φ/∂t²=c²∇²φ−γc²∂ₜ(∇·A);
+  ∂²A/∂t²=c²∇²A−γ∇(∂ₜφ)+c²µ₀J), NOT van Vlaenderen's decoupled □φ=ρ/ε₀, □A=µ₀J.
+  Rationale: the decoupled derivation makes the φ↔A cross-coupling cancel, which
+  (with J-only injection, no ρ) zeroes the temporal half of C and makes the
+  longitudinal ∇·A non-propagating gauge — evaporating exactly the scalar/grav
+  terms this project predicts. Both readings are valid derivations; experiment
+  adjudicates. We keep the terms.
+- **2026-05-29** A-equation OMITS −c²∇(∇·A) **by design** (not a bug). Adding it
+  → curl-curl form → longitudinal ∇·A becomes non-propagating. Measurement (AC
+  open helix, 32³, γ=1): C = 1.74e-2 splits 62% longitudinal ∇·A (1.09e-2) +
+  38% temporal (1/c²)∂ₜφ (6.56e-3), same sign (constructive). Keeping bare c²∇²A
+  lets the dominant 62% radiate. The earlier "missing term" bug report is
+  reclassified WAI. Φ_g = κ_G·C is ~62% derivation-robust (survives even the
+  decoupled reading) — a useful property for a falsifiable prediction.
+- **2026-05-29** A-equation φ-coupling term ∇(∂ₜφ) is c²-free (the temporal part
+  of c²∇C carries no c²). A spurious c² there caused the ORC-4eg NaN
+  instability. Stability secured via Gauss-Seidel velocity-pass ordering +
+  0.5·CFL safety factor.
+- **2026-05-29** OPEN (deferred, bead filed): only J is injected, never ρ. So
+  C's temporal half is sourced only via the cross-coupling, not by real charge
+  accumulation ∂ₜρ=−∇·J at open tips. Faithful ρ injection with exact continuity
+  would make ∂µJµ=0 and kill C entirely; the EED prediction needs a deliberate
+  current-source idealization (∂µJµ≠0). Resolve when modeling ρ.
+- **2026-05-29** GEM sector (Φ_g, A_g) co-evolves INSIDE the EM FDTD loop now
+  (ORC-j07): one GEM step after each EM step, against a per-step-refreshed C.
+  The old post-hoc pass used a frozen C snapshot → ∂C/∂t wrong by ~n_steps and a
+  constant ∇C. The SLW (derivative) channel κ_G·∂C/∂t (→Φ_g), κ_G·∇C (→A_g) only
+  fires for time-varying C; static configs stay dark (correct). KkDirect remains
+  a post-loop algebraic assignment.
+- **2026-05-29** GEM leapfrog carried the SAME ORC-4eg instability (fused skew
+  velocity read + spurious c² on ∇(∂Φ_g/∂t)) — latent because it had only ever
+  run on static/dark configs. Interleaving under an AC drive exposed it (phi_g
+  83% NaN, masked to 0 by the ORC-fwe max-fold). Fixed identically (ORC-21g):
+  Gauss-Seidel split vel_gem → vel_gem_phi + vel_gem_a; ∇(∂Φ_g/∂t) is c²-free;
+  longitudinal A_g stays propagating (c²∇²A_g, no −c²∇(∇·A_g)). GEM EOM as
+  implemented: ∂²Φ_g/∂t²=c²∇²Φ_g − c²∂ₜ(∇·A_g) + κ_G·∂ₜC ; ∂²A_g/∂t²=c²∇²A_g −
+  ∇(∂ₜΦ_g) + κ_G·∇C. AC open helix now gives a finite, non-zero Φ_g.

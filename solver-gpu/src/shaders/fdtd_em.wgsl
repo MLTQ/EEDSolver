@@ -1,26 +1,59 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // fdtd_em.wgsl — EED potential-primary leapfrog FDTD
 //
-// Evolves the 4-potential (φ, A) via two explicit passes per time step:
+// Evolves the 4-potential (φ, A) via THREE explicit passes per time step:
 //
-//   Pass 1  `vel_step`:   update velocities  (using current positions)
-//   Pass 2  `pos_step`:   update positions   (using new velocities)
+//   Pass 1a `vel_step_phi`: update φ-velocity  (using current positions + a_vel^n)
+//   Pass 1b `vel_step_a`:   update A-velocity  (using current positions + phi_vel^{n+1})
+//   Pass 2  `pos_step`:     update positions   (using new velocities)
 //
-// EED equations of motion (vacuum, γ=1, no gauge fixing):
+// EED equations of motion (vacuum, γ=1, no gauge fixing) — the CANONICAL
+// coupled, longitudinally-propagating form (see FIELD_THEORY.md decision log
+// 2026-05-29; ORC-4eg measurement):
 //
-//   ∂²φ/∂t² = c²∇²φ − c²·∂(∇·A)/∂t
-//   ∂²A/∂t² = c²∇²A − c²·∇(∂φ/∂t)
+//   ∂²φ/∂t² = c²∇²φ − γ·c²·∂(∇·A)/∂t
+//   ∂²A/∂t² = c²∇²A − γ·∇(∂φ/∂t)            [ + c²µ₀J, injected by inject_j.wgsl ]
 //
-// Leapfrog (DKD — drift, kick, drift — but here: kick then drift in one step):
-//   phi_vel^{n+1} = phi_vel^n  +  dt · [c²∇²φ^n  − c²·div(a_vel^n)]
-//   a_vel^{n+1}   = a_vel^n   +  dt · [c²∇²A^n  − c²·∇(phi_vel^n)]
+// TWO deliberate choices baked into the A-equation, both physical for the
+// deleted-DOF (EED) thesis — NOT typos:
+//
+//  (1) NO c² on ∇(∂φ/∂t).  The A↔φ coupling term is ∇(∂φ/∂t), not c²∇(∂φ/∂t):
+//      in c²∇C = c²∇(∇·A) + ∇(∂φ/∂t) the temporal piece carries no c².  Putting
+//      c² there made β = dt·c²·γ·k ~ 5e8 at CFL → instant NaN (ORC-4eg).
+//
+//  (2) NO −c²∇(∇·A) term.  Adding it would complete A to the textbook curl-curl
+//      form (c²∇²A − c²∇(∇·A) = −c²∇×∇×A), under which the LONGITUDINAL part of
+//      A (the ∇·A piece) is non-propagating gauge.  But ∇·A is the dominant
+//      ~62% of the EED scalar C = ∇·A + (1/c²)∂φ/∂t (measured, AC open helix),
+//      and the whole premise is that C is a *physical, propagating* deleted DOF.
+//      Keeping the bare c²∇²A lets ∇·A — hence C's dominant half — radiate at c
+//      to a detector.  This is a modeling commitment (coupled, not van
+//      Vlaenderen's decoupled □φ=ρ/ε₀, □A=µ₀J); experiment adjudicates.
+//
+// Leapfrog (kick then drift), Gauss-Seidel-ordered in the cross-coupling:
+//   phi_vel^{n+1} = phi_vel^n  +  dt · [c²∇²φ^n  − γ·c²·div(a_vel^n)]
+//   a_vel^{n+1}   = a_vel^n   +  dt · [c²∇²A^n  − γ·∇(phi_vel^{n+1})]   ← NEW phi_vel
 //   phi^{n+1}     = phi^n     +  dt · phi_vel^{n+1}
 //   a^{n+1}       = a^n       +  dt · a_vel^{n+1}
 //
-// Note on atomicity: vel_step and pos_step are dispatched as separate
-// GPU passes in a single command buffer (sequential, no CPU round-trip).
-// Within each pass, reads and writes to the SAME buffer are isolated
-// because each thread only writes its own flat index.
+// WHY THE SPLIT (ORC-4eg): the EED gauge cross-coupling terms — γ·div(a_vel) in
+// the φ equation and γ·∇(phi_vel) in the A equation — are FIRST-order spatial
+// derivatives of the *velocities*.  If both read the OLD velocities (one fused
+// pass), the longitudinal sub-update is the skew matrix [[1,−iβ],[−iβ,1]] with
+// β = dt·c²·γ·k, whose eigenvalues 1∓iβ have |λ| = √(1+β²) > 1 — growth every
+// step for ANY dt>0 (UNconditionally unstable; smaller dt does not help, it just
+// blows up a bit slower → all-NaN).  Updating phi_vel first and feeding the NEW
+// phi_vel into the a_vel update (Gauss-Seidel) makes the sub-update
+// [[1,−iβ],[−iβ,1−β²]] with det=1, trace=2−β² → conditionally stable for β≤2
+// (an ordinary CFL bound).  The two velocity passes MUST be separate GPU passes:
+// vel_step_a reads phi_vel at NEIGHBOUR cells, which other threads write in
+// pass 1a, so fusing them would be a data race.  With γ=0 (Lorenz/Maxwell) the
+// coupling vanishes and either ordering is identical.
+//
+// Note on atomicity: the passes are dispatched as separate GPU passes in a single
+// command buffer (sequential, no CPU round-trip).  Within each pass, reads and
+// writes to the SAME buffer are isolated because each thread only writes its own
+// flat index.
 //
 // Bindings (same for both entry points):
 //   0  phi      storage read_write   n1³ × f32
@@ -85,16 +118,25 @@ fn av_comp(ix: i32, iy: i32, iz: i32, n: i32, comp: u32) -> f32 {
     return a_vel[u32(cx + cy * n + cz * n * n) * 4u + comp];
 }
 
-// ── Pass 1: velocity update ───────────────────────────────────────────────────
-//
-// Reads: phi, a_vec, phi_vel, a_vel (all at time n)
-// Writes: phi_vel, a_vel (updated to n+1)
-//
-// Only interior vertices are updated; boundary vertices keep zero velocity
-// (simple homogeneous Dirichlet — Mur ABC added in Phase 4).
+// Shared sponge-layer damping factor for vertex (ix,iy,iz): returns the
+// quadratic damping rate σ(r) [1/s].  Zero outside the sponge / when disabled.
+fn sponge_damp_at(ix: i32, iy: i32, iz: i32, n: i32) -> f32 {
+    let sc   = i32(params.sponge_cells);
+    let dist = min(min(ix, n-1-ix), min(min(iy, n-1-iy), min(iz, n-1-iz)));
+    if dist < sc && params.sigma_max > 0.0 {
+        let t = 1.0 - f32(dist) / f32(sc);   // 1 at wall → 0 at interior
+        return params.sigma_max * t * t;     // quadratic profile
+    }
+    return 0.0;
+}
 
+// ── Pass 1a: φ-velocity update ──────────────────────────────────────────────
+//
+// Reads: phi, a_vel (both at time n).  Writes: phi_vel (n+1).
+// MUST run before vel_step_a (Gauss-Seidel cross-coupling — see header, ORC-4eg).
+// Boundary vertices keep zero velocity (homogeneous Dirichlet).
 @compute @workgroup_size(256)
-fn vel_step(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn vel_step_phi(@builtin(global_invocation_id) gid: vec3<u32>) {
     let n    = i32(params.n1);
     let flat = gid.x;
     if flat >= u32(n * n * n) { return; }
@@ -103,18 +145,17 @@ fn vel_step(@builtin(global_invocation_id) gid: vec3<u32>) {
     let iy = (i32(flat) / n) % n;
     let iz = i32(flat) / (n * n);
 
-    // Zero velocity at domain boundary (Dirichlet).
     if ix == 0 || ix == n - 1 || iy == 0 || iy == n - 1 || iz == 0 || iz == n - 1 {
         return;
     }
 
-    let dx   = params.dx;
-    let dt   = params.dt;
-    let inv2dx = 0.5 / dx;
+    let dx      = params.dx;
+    let dt      = params.dt;
+    let inv2dx  = 0.5 / dx;
     let inv_dx2 = 1.0 / (dx * dx);
 
     // ── Laplacian of φ ────────────────────────────────────────────────────────
-    let phi_c = phi_at(ix,     iy,     iz,     n);
+    let phi_c = phi_at(ix, iy, iz, n);
     let lap_phi = (
         phi_at(ix+1, iy,   iz,   n) + phi_at(ix-1, iy,   iz,   n) +
         phi_at(ix,   iy+1, iz,   n) + phi_at(ix,   iy-1, iz,   n) +
@@ -122,32 +163,44 @@ fn vel_step(@builtin(global_invocation_id) gid: vec3<u32>) {
         - 6.0 * phi_c
     ) * inv_dx2;
 
-    // ── div(A_vel) = ∂Avx/∂x + ∂Avy/∂y + ∂Avz/∂z ───────────────────────────
+    // ── div(A_vel) at time n ───────────────────────────────────────────────────
     let div_av =
         (av_comp(ix+1, iy,   iz,   n, 0u) - av_comp(ix-1, iy,   iz,   n, 0u)) * inv2dx +
         (av_comp(ix,   iy+1, iz,   n, 1u) - av_comp(ix,   iy-1, iz,   n, 1u)) * inv2dx +
         (av_comp(ix,   iy,   iz+1, n, 2u) - av_comp(ix,   iy,   iz-1, n, 2u)) * inv2dx;
 
-    // ── Sponge layer damping ──────────────────────────────────────────────────
-    // Minimum distance from any domain face (in cells).
-    let sc    = i32(params.sponge_cells);
-    let dist  = min(min(ix, n-1-ix), min(min(iy, n-1-iy), min(iz, n-1-iz)));
-    var sponge_damp = 0.0f;
-    if dist < sc && params.sigma_max > 0.0 {
-        let t   = 1.0 - f32(dist) / f32(sc);  // 1 at wall → 0 at interior
-        sponge_damp = params.sigma_max * t * t;  // quadratic profile
-    }
+    let sponge_damp = sponge_damp_at(ix, iy, iz, n);
 
-    // ── φ velocity update ─────────────────────────────────────────────────────
     let acc_phi = C2 * (lap_phi - params.gamma * div_av);
     phi_vel[flat] = (phi_vel[flat] + dt * acc_phi) * (1.0 - sponge_damp * dt);
+}
 
-    // ── Laplacian of A (each component) + ∇(φ_vel) ───────────────────────────
-    // For component k: ∂²Ak/∂t² = c²∇²Ak − c²·∂(φ_vel)/∂xk
+// ── Pass 1b: A-velocity update ──────────────────────────────────────────────
+//
+// Reads: a_vec (time n) and phi_vel (n+1, freshly written by vel_step_phi).
+// Writes: a_vel (n+1).  Feeding the NEW phi_vel into ∇(φ_vel) is what makes the
+// EED cross-coupling conditionally stable (see header, ORC-4eg).
+@compute @workgroup_size(256)
+fn vel_step_a(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let n    = i32(params.n1);
+    let flat = gid.x;
+    if flat >= u32(n * n * n) { return; }
 
-    // Precompute Laplacian for each component.
-    let a_base = flat * 4u;
+    let ix = i32(flat) % n;
+    let iy = (i32(flat) / n) % n;
+    let iz = i32(flat) / (n * n);
 
+    if ix == 0 || ix == n - 1 || iy == 0 || iy == n - 1 || iz == 0 || iz == n - 1 {
+        return;
+    }
+
+    let dx      = params.dx;
+    let dt      = params.dt;
+    let inv2dx  = 0.5 / dx;
+    let inv_dx2 = 1.0 / (dx * dx);
+    let a_base  = flat * 4u;
+
+    // ── Laplacian of A (each component) ────────────────────────────────────────
     let lap_ax = (
         a_comp(ix+1, iy,   iz,   n, 0u) + a_comp(ix-1, iy,   iz,   n, 0u) +
         a_comp(ix,   iy+1, iz,   n, 0u) + a_comp(ix,   iy-1, iz,   n, 0u) +
@@ -169,17 +222,17 @@ fn vel_step(@builtin(global_invocation_id) gid: vec3<u32>) {
         - 6.0 * a_vec[a_base + 2u]
     ) * inv_dx2;
 
-    // Gradient of φ_vel
+    // ── Gradient of the UPDATED φ_vel (Gauss-Seidel) ──────────────────────────
     let gpv_x = (pv_at(ix+1, iy,   iz,   n) - pv_at(ix-1, iy,   iz,   n)) * inv2dx;
     let gpv_y = (pv_at(ix,   iy+1, iz,   n) - pv_at(ix,   iy-1, iz,   n)) * inv2dx;
     let gpv_z = (pv_at(ix,   iy,   iz+1, n) - pv_at(ix,   iy,   iz-1, n)) * inv2dx;
 
-    // ── A velocity update ─────────────────────────────────────────────────────
-    // EED: acc_A = c²∇²A − γ·c²·∇(∂φ/∂t);  also apply sponge damping.
+    let sponge_damp = sponge_damp_at(ix, iy, iz, n);
     let damp = 1.0 - sponge_damp * dt;
-    a_vel[a_base]      = (a_vel[a_base]      + dt * C2 * (lap_ax - params.gamma * gpv_x)) * damp;
-    a_vel[a_base + 1u] = (a_vel[a_base + 1u] + dt * C2 * (lap_ay - params.gamma * gpv_y)) * damp;
-    a_vel[a_base + 2u] = (a_vel[a_base + 2u] + dt * C2 * (lap_az - params.gamma * gpv_z)) * damp;
+
+    a_vel[a_base]      = (a_vel[a_base]      + dt * (C2 * lap_ax - params.gamma * gpv_x)) * damp;
+    a_vel[a_base + 1u] = (a_vel[a_base + 1u] + dt * (C2 * lap_ay - params.gamma * gpv_y)) * damp;
+    a_vel[a_base + 2u] = (a_vel[a_base + 2u] + dt * (C2 * lap_az - params.gamma * gpv_z)) * damp;
     // a_vel[a_base + 3u] stays 0 (padding component)
 }
 

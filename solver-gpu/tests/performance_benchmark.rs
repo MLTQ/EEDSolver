@@ -77,11 +77,11 @@ async fn benchmark_fdtd_step_64() {
 
     // Warmup: 1 step
     let cfl_dt = grid.cfl_dt() as f32;
-    gstate.run_fdtd(&ctx, &grid, cfl_dt, 1, 1.0).expect("warmup FDTD");
+    gstate.run_fdtd(&ctx, &grid, cfl_dt, 1, 1.0, None).expect("warmup FDTD");
 
     // Timed: 10 steps
     let t0 = Instant::now();
-    gstate.run_fdtd(&ctx, &grid, cfl_dt, 10, 1.0).expect("timed FDTD");
+    gstate.run_fdtd(&ctx, &grid, cfl_dt, 10, 1.0, None).expect("timed FDTD");
     let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
     let per_step_ms = elapsed_ms / 10.0;
 
