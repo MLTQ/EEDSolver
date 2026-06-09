@@ -124,7 +124,23 @@ pub struct CoilParams {
     /// current J_m = ρ_m·v that sources A_g via ∇²A_g = (4πG/c²)·J_m (ORC-0tl).
     #[serde(default)]
     pub mass_velocity_m_s: [f64; 3],
+
+    /// Break a *closed* winding so the wire has free tips (open circuit).  For
+    /// Toroid / ToroidPoloidal / Rodin this truncates the loop, leaving two tips
+    /// where charge accumulates under AC drive (∂µJµ ≠ 0 → sources the EED scalar
+    /// C → Φ_g).  No effect on already-open types (solenoid/open_helix/spiral).
+    #[serde(default)]
+    pub open_circuit: bool,
+
+    /// Fraction of the winding removed to form the open-circuit gap (only when
+    /// `open_circuit` is set).  Larger ⇒ better-separated tips (stronger C) but a
+    /// more obviously incomplete coil; smaller ⇒ a near-complete coil with a thin
+    /// notch (weaker C).  Clamped to [0.02, 0.6].  Default 0.20.
+    #[serde(default = "default_open_gap")]
+    pub open_gap_fraction: f64,
 }
+
+fn default_open_gap() -> f64 { 0.20 }
 
 fn default_plate_aspect() -> f64 { 5.0 }
 
@@ -143,6 +159,8 @@ impl Default for CoilParams {
             plate_aspect:  5.0,
             mass_density_kg_m3: 0.0,
             mass_velocity_m_s:  [0.0; 3],
+            open_circuit:       false,
+            open_gap_fraction:  default_open_gap(),
         }
     }
 }
@@ -462,6 +480,22 @@ pub struct FieldMaximum {
     pub max_location: [f64; 3],  // [x, y, z] metres
 }
 
+/// Directional asymmetry of Φ_g about a device's axis — the thrust-direction
+/// indicator for an asymmetric source (e.g. a Townsend-Brown capacitor).
+/// The grid is split into two half-spaces at the entity centre, normal to
+/// `axis`; `plus_peak`/`minus_peak` are the strongest |Φ_g| in each half,
+/// `ratio` (≥1) is the stronger peak over the weaker, and `lean` points from the
+/// device centre toward the stronger side.  (Peaks, not sums, so the large
+/// symmetric inter-electrode core doesn't dilute the directional signal.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FieldAsymmetry {
+    pub axis:       [f64; 3],   // device axis (unit), orientation·ẑ of the primary entity
+    pub lean:       [f64; 3],   // unit vector toward the stronger half (±axis)
+    pub ratio:      f64,        // max|Φ_g|(strong half) / max|Φ_g|(weak half), ≥ 1
+    pub plus_peak:  f64,        // max|Φ_g| in the +axis half
+    pub minus_peak: f64,        // max|Φ_g| in the −axis half
+}
+
 /// Result of a holonomy path integral.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HolonomyResult {
@@ -488,6 +522,9 @@ pub struct SolveResult {
     /// For capacitor sources: [anode_center_m, cathode_center_m].
     /// Frontend can render these as electrode markers in the 3-D viewer.
     pub lead_points:  Vec<[[f64; 3]; 2]>,
+    /// Directional asymmetry of Φ_g about the primary entity's axis (the
+    /// thrust-direction indicator).  `None` when GEM is off or Φ_g is ~0.
+    pub phi_g_asymmetry: Option<FieldAsymmetry>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

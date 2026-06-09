@@ -109,6 +109,7 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
               setCoil({
                 coil_type:   t,
                 current_A:   0,
+                frequency_hz: 0,   // voltage-driven: clear any stale AC freq (ORC-1sw)
                 voltage_v:   entity.coil.voltage_v ?? 1000,
                 plate_gap_m: entity.coil.plate_gap_m && entity.coil.plate_gap_m > 0
                                ? entity.coil.plate_gap_m : 0.02,
@@ -129,6 +130,7 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
               setCoil({
                 coil_type: t,
                 current_A: 0,
+                frequency_hz: 0,   // no current → no AC injection (ORC-1sw)
                 mass_density_kg_m3:
                   entity.coil.mass_density_kg_m3 && entity.coil.mass_density_kg_m3 > 0
                     ? entity.coil.mass_density_kg_m3 : 1.0e9,
@@ -195,6 +197,13 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
         const isAC  = AC_CAPABLE_TYPES.includes(entity.coil.coil_type);
         const isAsym = entity.coil.coil_type === "capacitor_asymmetric";
         const isMass = entity.coil.coil_type === "mass_sphere";
+        // Closed windings that can be broken open to source C at the tips (ORC-09r).
+        const canOpen = (["toroid", "toroid_poloidal", "rodin"] as const)
+          .includes(entity.coil.coil_type as never);
+        const isOpen = entity.coil.open_circuit ?? false;
+        // Open circuits (open helix, or any open winding) are antenna-like →
+        // voltage-driven (I₀ = V₀/Z_ref), not current-driven (ORC-09r).
+        const isVoltageDriven = entity.coil.coil_type === "open_helix" || (canOpen && isOpen);
         return (
           <Section label="Geometry">
             <Slider label="Radius" unit="m" value={entity.coil.radius_m}
@@ -267,31 +276,61 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
                   );
                 })()}
                 <Slider label="Voltage V" unit="V" value={entity.coil.voltage_v ?? 0}
-                  min={0} max={50000} step={100}
+                  min={0} max={200000} step={500}
+                  fmt={v => v >= 1000 ? `${(v/1000).toFixed(0)} kV` : `${v.toFixed(0)} V`}
                   onChange={v => setCoil({ voltage_v: v })}
                 />
               </>
             )}
 
-            {/* Drive source — open helix is voltage-driven; closed loops use current */}
-            {!isCap && !isMass && entity.coil.coil_type !== "open_helix" && (
+            {/* Drive source — open circuits are voltage-driven; closed loops use current */}
+            {!isCap && !isMass && !isVoltageDriven && (
               <Slider label="Current" unit="A" value={entity.coil.current_A}
                 min={0.1} max={1000} step={0.5}
                 onChange={v => setCoil({ current_A: v })} />
             )}
-            {entity.coil.coil_type === "open_helix" && (
+            {isVoltageDriven && (
               <Slider
                 label="Voltage V₀" unit="V"
                 value={entity.coil.voltage_v ?? 0}
-                min={0} max={10000} step={10}
-                fmt={v => v.toFixed(0)}
+                min={0} max={200000} step={500}
+                fmt={v => v >= 1000 ? `${(v/1000).toFixed(0)} kV` : `${v.toFixed(0)} V`}
                 onChange={v => setCoil({ voltage_v: v })}
-                hint={`Open circuit — I₀ = V₀/50 Ω = ${((entity.coil.voltage_v ?? 0) / 50).toFixed(2)} A at feed`}
+                hint={`Open circuit — I₀ = V₀/50 Ω = ${((entity.coil.voltage_v ?? 0) / 50).toFixed(1)} A at the tips`}
               />
             )}
 
-            {/* AC frequency (for current-carrying types) */}
-            {isAC && (
+            {/* Open-circuit toggle — break a closed winding so its tips source C */}
+            {canOpen && (
+              <Toggle
+                label="Open circuit"
+                hint={isOpen
+                  ? "Loop broken — tips accumulate charge → ∂µJµ≠0 sources C (drive AC below)"
+                  : "Closed loop — ∇·J≈0, little C. Open it to source the EED scalar."}
+                checked={isOpen}
+                onChange={v => setCoil(v
+                  ? { open_circuit: true,
+                      // Open ⇒ voltage-driven AC: pre-fill a frequency and a feed
+                      // voltage so the tips actually source C out of the box.
+                      frequency_hz: (entity.coil.frequency_hz ?? 0) > 0
+                        ? entity.coil.frequency_hz : 1.0e9,
+                      voltage_v: (entity.coil.voltage_v ?? 0) > 0
+                        ? entity.coil.voltage_v : 2500 }
+                  : { open_circuit: false })}
+              />
+            )}
+            {canOpen && isOpen && (
+              <Slider
+                label="Gap" unit="%"
+                value={(entity.coil.open_gap_fraction ?? 0.20) * 100}
+                min={2} max={60} step={1} fmt={v => `${v.toFixed(0)}%`}
+                onChange={v => setCoil({ open_gap_fraction: v / 100 })}
+                hint="Bigger gap → tips further apart → stronger C (but a more open coil)"
+              />
+            )}
+
+            {/* AC frequency — current-carrying types, or any open-circuit coil */}
+            {(isAC || (canOpen && isOpen)) && (
               <Slider
                 label="Frequency" unit="Hz"
                 value={entity.coil.frequency_hz ?? 0}
@@ -300,7 +339,7 @@ export function GeometryPanel({ request, onChange, disabled }: Props) {
                           : v >= 1e6 ? `${(v/1e6).toFixed(1)} MHz`
                           : v >= 1e3 ? `${(v/1e3).toFixed(1)} kHz` : `${v.toFixed(0)} Hz`}
                 onChange={v => setCoil({ frequency_hz: v })}
-                hint={entity.coil.frequency_hz ?? 0 > 0
+                hint={(entity.coil.frequency_hz ?? 0) > 0
                   ? "AC — J(t) injected each FDTD step; φ≠0 from EED coupling"
                   : "DC — static source (no AC injection)"}
               />

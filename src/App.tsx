@@ -212,6 +212,7 @@ export default function App() {
               entity={request.entities[0]}
               domainRadius={request.solver.domain_radius_m}
               leadPoints={result?.lead_points}
+              phiGAsymmetry={result?.phi_g_asymmetry}
             />
           </div>
 

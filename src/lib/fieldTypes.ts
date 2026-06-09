@@ -67,6 +67,12 @@ export interface CoilParams {
   mass_density_kg_m3?: number;
   /** Mass-region velocity [m/s] [vx,vy,vz] → mass current J_m = ρ_m·v sources A_g. */
   mass_velocity_m_s?:  [number, number, number];
+  /** Break a closed winding (toroid/poloidal/Rodin) so the wire has free tips —
+   *  charge accumulates there under AC, sourcing the EED scalar C. (ORC-09r) */
+  open_circuit?: boolean;
+  /** Fraction of the winding removed to form the open-circuit gap (0.02–0.6).
+   *  Larger = more separated tips → stronger C, but a more open coil. Default 0.2 */
+  open_gap_fraction?: number;
 }
 
 /** One current-carrying entity in the simulation. */
@@ -198,6 +204,16 @@ export interface HolonomyResult {
   value: number;
 }
 
+/** Directional asymmetry of Φ_g about the device axis — the thrust-direction
+ *  indicator for an asymmetric source (Townsend-Brown capacitor). */
+export interface FieldAsymmetry {
+  axis:       [number, number, number];  // device axis (unit)
+  lean:       [number, number, number];  // unit vector toward the stronger half
+  ratio:      number;                    // max|Φ_g| stronger half / weaker half, ≥ 1
+  plus_peak:  number;
+  minus_peak: number;
+}
+
 export interface SolveResult {
   solve_time_s:      number;
   grid_cells:        number;   // (cells_per_axis)³
@@ -215,6 +231,8 @@ export interface SolveResult {
    * Rendered as markers in the 3-D viewer.
    */
   lead_points:       [[number,number,number],[number,number,number]][];
+  /** Φ_g directional asymmetry (thrust-direction). null when GEM off / Φ_g≈0. */
+  phi_g_asymmetry?:  FieldAsymmetry | null;
 }
 
 export interface SolverStatus {

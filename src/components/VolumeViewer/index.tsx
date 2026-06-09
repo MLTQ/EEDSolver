@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import type { CoilEntity, CoilParams, CoilType, FieldMaximum, FieldName, VolumeData } from "../../lib/fieldTypes";
+import type { CoilEntity, CoilParams, CoilType, FieldAsymmetry, FieldMaximum, FieldName, VolumeData } from "../../lib/fieldTypes";
 import { FIELD_CHIP, FIELD_UNITS } from "../../lib/fieldTypes";
 import { FIELD_CHIP_COLOR, DEFAULT_CHIP_COLOR } from "../../lib/colormap";
 
@@ -23,6 +23,18 @@ interface Props {
   domainRadius:  number;          // meters
   /** Lead attachment points per entity [[start_m, end_m]]. */
   leadPoints?:   [[number,number,number],[number,number,number]][];
+  /** Φ_g directional asymmetry (thrust-direction indicator). */
+  phiGAsymmetry?: FieldAsymmetry | null;
+}
+
+/** Format a unit lean vector as a compact axis label, e.g. "+z" or "(+0.7,0,+0.7)". */
+function leanLabel(lean: [number, number, number]): string {
+  const ax = ["x", "y", "z"];
+  // Dominant axis if one component carries ≥95% of the vector.
+  const mags = lean.map(Math.abs);
+  const i = mags.indexOf(Math.max(...mags));
+  if (mags[i] >= 0.95) return `${lean[i] >= 0 ? "+" : "−"}${ax[i]}`;
+  return `(${lean.map(v => v.toFixed(1)).join(",")})`;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,17 +146,26 @@ void main() {
 type Pt3 = [number, number, number];
 
 function buildCoilPath(p: CoilParams): Pt3[] {
+  let path: Pt3[];
   switch (p.coil_type as CoilType) {
     case "solenoid":
-    case "open_helix":       return solenoidPath(p);
-    case "toroid":           return toroidPath(p);
-    case "toroid_poloidal":  return toroidPoloidalPath(p);
-    case "flat_spiral":      return flatSpiralPath(p);
-    case "rodin":            return rodinPath(p);
+    case "open_helix":       path = solenoidPath(p); break;
+    case "toroid":           path = toroidPath(p); break;
+    case "toroid_poloidal":  path = toroidPoloidalPath(p); break;
+    case "flat_spiral":      path = flatSpiralPath(p); break;
+    case "rodin":            path = rodinPath(p); break;
     case "capacitor_symmetric":
     case "capacitor_asymmetric": return []; // handled by buildCapacitorGroup, not path+tube
     default:                 return [];
   }
+  // Open-circuit: drop the trailing gap fraction of a closed winding so the
+  // rendered tube has the same free tips the physics path does (ORC-09r).
+  if (p.open_circuit &&
+      (p.coil_type === "toroid" || p.coil_type === "toroid_poloidal" || p.coil_type === "rodin")) {
+    const gap = Math.min(0.6, Math.max(0.02, p.open_gap_fraction ?? 0.20));
+    path = path.slice(0, Math.max(2, Math.floor(path.length * (1 - gap))));
+  }
+  return path;
 }
 
 /** Continuous helix. */
@@ -160,48 +181,39 @@ function solenoidPath(p: CoilParams): Pt3[] {
   return pts;
 }
 
-/** N small poloidal loops arranged azimuthally around the torus. */
+/** Azimuthal toroid — continuous poloidal winding T(1,N): 1 toroidal trip while
+ *  winding N times around the tube. Mirrors the Rust `toroid` builder exactly
+ *  (the physics path), so the picture matches the simulation. */
 function toroidPath(p: CoilParams): Pt3[] {
-  const R = p.radius_m, N = p.turns, pitch = p.pitch_m;
-  const r_minor = Math.max(pitch * N / (2 * Math.PI), p.wire_radius_m * 4);
-  const S = 32;
+  const R = p.radius_m, N = p.turns;
+  const r = Math.max(p.pitch_m, R * 0.05);
+  const S = Math.max(N * 180, 36);
   const pts: Pt3[] = [];
-  for (let i = 0; i < N; i++) {
-    const phi = (2 * Math.PI * i) / N;
-    const cx = R * Math.cos(phi), cy = R * Math.sin(phi);
-    for (let j = 0; j <= S; j++) {
-      const theta = (2 * Math.PI * j) / S;
-      // Poloidal loop: in the plane containing the z-axis and radial dir at phi
-      pts.push([
-        cx + r_minor * Math.cos(theta) * Math.cos(phi),
-        cy + r_minor * Math.cos(theta) * Math.sin(phi),
-        r_minor * Math.sin(theta),
-      ]);
-    }
-    // NaN gap so TubeGeometry segments don't connect between loops
-    if (i < N - 1) pts.push([NaN, NaN, NaN]);
+  for (let i = 0; i <= S; i++) {
+    const t = i / S;
+    const phi = 2 * Math.PI * t;        // 1 toroidal trip
+    const th  = 2 * Math.PI * N * t;    // N poloidal winds
+    const rho = R + r * Math.cos(th);
+    pts.push([rho * Math.cos(phi), rho * Math.sin(phi), r * Math.sin(th)]);
   }
   return pts;
 }
 
-/** N loops in radial (poloidal) planes — each wound the short way around the torus. */
+/** Poloidal-field toroid — continuous toroidal winding T(N,1): N trips the long
+ *  way around (solenoid bent into a ring) with one slow poloidal advance.
+ *  Mirrors the Rust `toroid_poloidal` builder — genuinely distinct from the
+ *  azimuthal toroid (its transpose). */
 function toroidPoloidalPath(p: CoilParams): Pt3[] {
-  const R = p.radius_m, N = p.turns, pitch = p.pitch_m;
-  const r_minor = pitch * N / (2 * Math.PI);
-  const S = 32;
+  const R = p.radius_m, N = p.turns;
+  const r = Math.max(p.pitch_m, R * 0.05);
+  const S = Math.max(N * 180, 36);
   const pts: Pt3[] = [];
-  for (let i = 0; i < N; i++) {
-    const phi = (2 * Math.PI * i) / N;
-    const cx = R * Math.cos(phi), cy = R * Math.sin(phi);
-    for (let j = 0; j <= S; j++) {
-      const theta = (2 * Math.PI * j) / S;
-      pts.push([
-        cx + r_minor * Math.cos(theta) * Math.cos(phi),
-        cy + r_minor * Math.cos(theta) * Math.sin(phi),
-        r_minor * Math.sin(theta),
-      ]);
-    }
-    if (i < N - 1) pts.push([NaN, NaN, NaN]);
+  for (let i = 0; i <= S; i++) {
+    const t = i / S;
+    const phi = 2 * Math.PI * N * t;    // N toroidal trips
+    const th  = 2 * Math.PI * t;        // 1 poloidal advance
+    const rho = R + r * Math.cos(th);
+    pts.push([rho * Math.cos(phi), rho * Math.sin(phi), r * Math.sin(th)]);
   }
   return pts;
 }
@@ -220,31 +232,24 @@ function flatSpiralPath(p: CoilParams): Pt3[] {
   return pts;
 }
 
-/** Figure-8 Rodin pattern: alternating-tilt loops arranged on a torus. */
+/** Rodin/Marko star coil — {M/K} node-skip winding, continuous torus winding
+ *  T(K,M) with K=2 and M odd (single wire), large minor radius so the inner
+ *  dips cross near the hub (the figure-8 woven star). Mirrors the Rust `rodin`
+ *  builder exactly. */
 function rodinPath(p: CoilParams): Pt3[] {
-  const R = p.radius_m, N = p.turns;
-  const r_minor = Math.max(p.pitch_m * N / (2 * Math.PI), p.wire_radius_m * 4);
-  const tilt = Math.PI / 4;
-  const S = 32;
+  const R = p.radius_m;
+  const mRaw = Math.max(p.turns, 5);
+  const M = mRaw % 2 === 0 ? mRaw + 1 : mRaw;   // odd ⇒ single continuous wire
+  const K = 2;                                  // skip every other node → {M/2} star
+  const r = R * 0.8;                            // large ⇒ visible star crossings
+  const S = Math.max(M * 240, 240);
   const pts: Pt3[] = [];
-  for (let i = 0; i < N; i++) {
-    const phi = (2 * Math.PI * i) / N;
-    const sign = i % 2 === 0 ? 1 : -1;
-    const cx = R * Math.cos(phi), cy = R * Math.sin(phi);
-    const ct = Math.cos(sign * tilt), st = Math.sin(sign * tilt);
-    for (let j = 0; j <= S; j++) {
-      const theta = (2 * Math.PI * j) / S;
-      const cosT = Math.cos(theta), sinT = Math.sin(theta);
-      // Apply tilt: rotate the loop around the radial axis
-      const localR = r_minor * cosT;
-      const localZ = r_minor * sinT * ct;
-      pts.push([
-        cx + localR * Math.cos(phi),
-        cy + localR * Math.sin(phi),
-        localZ + sign * r_minor * st * 0.3,
-      ]);
-    }
-    if (i < N - 1) pts.push([NaN, NaN, NaN]);
+  for (let i = 0; i <= S; i++) {
+    const t = i / S;
+    const phi = 2 * Math.PI * K * t;            // K toroidal trips
+    const th  = 2 * Math.PI * M * t;            // M poloidal dips
+    const rho = R + r * Math.cos(th);
+    pts.push([rho * Math.cos(phi), rho * Math.sin(phi), r * Math.sin(th)]);
   }
   return pts;
 }
@@ -400,7 +405,7 @@ function buildCapacitorGroup(p: CoilParams, maxS: number, group: THREE.Group) {
 // Component
 // ---------------------------------------------------------------------------
 
-export function VolumeViewer({ volume, selectedField, isSolving, maxima, entity, domainRadius, leadPoints }: Props) {
+export function VolumeViewer({ volume, selectedField, isSolving, maxima, entity, domainRadius, leadPoints, phiGAsymmetry }: Props) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const sceneRef  = useRef<SceneState | null>(null);
   const [threshold, setThreshold] = useState(0.02);
@@ -554,6 +559,17 @@ export function VolumeViewer({ volume, selectedField, isSolving, maxima, entity,
               {fieldLabel(m.field)} {fmtSI(m.max_value, FIELD_UNITS[m.field] ?? "")}
             </span>
           ))}
+          {/* Φ_g directional asymmetry — thrust-direction indicator (ORC-65c) */}
+          {phiGAsymmetry && phiGAsymmetry.ratio > 1.05 && (
+            <span
+              className="text-xs tabular-nums px-2 py-0.5 rounded bg-fuchsia-900/50 text-fuchsia-200"
+              title={`Σ|Φ_g| leans ${phiGAsymmetry.ratio.toFixed(1)}× toward the ${leanLabel(phiGAsymmetry.lean)} side`}
+            >
+              Φ_g lean {phiGAsymmetry.ratio >= 100
+                ? phiGAsymmetry.ratio.toExponential(1)
+                : phiGAsymmetry.ratio.toFixed(1)}× → {leanLabel(phiGAsymmetry.lean)}
+            </span>
+          )}
         </div>
       )}
 

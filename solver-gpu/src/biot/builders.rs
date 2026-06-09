@@ -30,11 +30,13 @@ pub const OPEN_HELIX_Z_REF: f64 = 50.0;
 pub fn entity_to_segments(entity: &CoilEntity) -> Vec<WireSegment> {
     let raw = build_path(entity);
 
-    // For open helix: voltage-driven — derive peak feed current from V₀ / Z_ref.
-    // All other types: current_a is the directly specified loop current.
-    let current = match entity.coil.coil_type {
-        CoilType::OpenHelix => (entity.coil.voltage_v / OPEN_HELIX_Z_REF) as f32,
-        _                   => entity.coil.current_a as f32,
+    // Open circuits (open helix, or any winding with open_circuit set) are
+    // antenna-like: voltage-driven, with peak feed current I₀ = V₀ / Z_ref.  A
+    // closed loop instead carries the directly-specified loop current.
+    let current = if entity.coil.coil_type == CoilType::OpenHelix || entity.coil.open_circuit {
+        (entity.coil.voltage_v / OPEN_HELIX_Z_REF) as f32
+    } else {
+        entity.coil.current_a as f32
     };
 
     // Apply rigid transform: rotate by quaternion, then translate.
@@ -54,7 +56,7 @@ pub fn entity_to_segments(entity: &CoilEntity) -> Vec<WireSegment> {
 
 fn build_path(e: &CoilEntity) -> Vec<[f64; 3]> {
     let c = &e.coil;
-    match c.coil_type {
+    let path = match c.coil_type {
         CoilType::Solenoid            => solenoid(c.radius_m, c.turns, c.pitch_m),
         CoilType::Toroid              => toroid(c.radius_m, c.turns, c.pitch_m),
         CoilType::ToroidPoloidal      => toroid_poloidal(c.radius_m, c.turns, c.pitch_m),
@@ -68,6 +70,23 @@ fn build_path(e: &CoilEntity) -> Vec<[f64; 3]> {
         // Pure mass source: no current, no Biot-Savart path.  Its Φ_g/A_g come
         // from the GEM mass-source kernel (ORC-0tl), not from any winding.
         CoilType::MassSphere          => vec![],
+    };
+
+    // Open-circuit option (ORC-09r): break a *closed* winding so the wire has
+    // free tips.  Under AC drive the oscillating charge at the tips gives
+    // ∂µJµ ≠ 0 → sources the EED scalar C (the only way a toroidal topology
+    // produces Φ_g — closed loops have ∇·J ≈ 0).  Already-open types
+    // (solenoid/open_helix/flat_spiral) have tips by construction, so leave them.
+    if c.open_circuit
+        && matches!(c.coil_type,
+            CoilType::Toroid | CoilType::ToroidPoloidal | CoilType::Rodin)
+        && path.len() > 4
+    {
+        let gap  = c.open_gap_fraction.clamp(0.02, 0.6);
+        let keep = ((path.len() as f64 * (1.0 - gap)) as usize).max(2);
+        path[..keep].to_vec()
+    } else {
+        path
     }
 }
 
@@ -150,23 +169,24 @@ fn toroid(radius: f64, turns: u32, pitch: f64) -> Vec<[f64; 3]> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Toroid–Poloidal — like toroid but M toroidal trips for N poloidal winds
-// (N/M turns per trip, M trips total)
+// Toroid–Poloidal — poloidal-field winding (transpose of the azimuthal toroid)
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Uses M = 2 toroidal trips so the winding crosses the torus twice.
-// Practical approximation to the full bifilar toroid winding.
-
+// Poloidal-field toroid — the genuine *transpose* of the azimuthal toroid.
+// The wire winds TOROIDALLY (the long way, N trips around the major circle, like
+// a solenoid bent into a ring) and advances just ONE slow poloidal turn over the
+// whole coil.  Current is predominantly toroidal ⇒ B is POLOIDAL (threads the
+// hole), the physical contrast to the azimuthal toroid's confined toroidal B.
+// Torus winding T(N, 1) vs the azimuthal T(1, N).
 fn toroid_poloidal(radius: f64, turns: u32, pitch: f64) -> Vec<[f64; 3]> {
-    let r     = pitch.max(radius * 0.05);
-    let trips = 2u32;                         // toroidal trips
-    let n_pol = turns as f64 / trips as f64;  // poloidal winds per trip
-    let pts   = (turns * 180).max(36) as usize;
+    let r   = pitch.max(radius * 0.05);
+    let n   = turns as f64;
+    let pts = (turns * 180).max(36) as usize;
     (0..=pts)
         .map(|i| {
             let t   = i as f64 / pts as f64;
-            let phi = TAU * trips as f64 * t;
-            let th  = TAU * n_pol * t;
+            let phi = TAU * n * t;   // N toroidal trips (the long way around)
+            let th  = TAU * t;       // ONE slow poloidal advance over the coil
             let rho = radius + r * th.cos();
             [rho * phi.cos(), rho * phi.sin(), r * th.sin()]
         })
@@ -200,28 +220,31 @@ fn flat_spiral(radius: f64, turns: u32, pitch: f64) -> Vec<[f64; 3]> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Rodin coil — figure-8 winding on a torus
+// Rodin / Marko coil — star (node-skip) winding on a torus
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// The Rodin coil winds with poloidal angle advancing 2× faster than toroidal,
-// crossing the torus surface in a figure-8 pattern.  This creates balanced
-// north/south winding that is claimed to produce anomalous field-line geometry.
+// Place M nodes evenly around the torus and connect every K-th node — the star
+// polygon {M/K}.  Between nodes the wire dips through a full poloidal loop, so
+// (with a LARGE minor radius) the chords sweep near the hub and cross over/under
+// each other: the figure-8 woven pattern.  Continuously this is the torus
+// winding T(K, M): K toroidal trips, M poloidal dips.
 //
-//   φ(t) = 2π N t                 (toroidal)
-//   θ(t) = 2 × 2π N t            (poloidal, 2× faster)
-//   x(t) = (R + r cosθ) cosφ
-//   y(t) = (R + r cosθ) sinφ
-//   z(t) = r sinθ
-
-fn rodin(radius: f64, turns: u32, pitch: f64) -> Vec<[f64; 3]> {
-    let r    = pitch.max(radius * 0.1);
-    let n    = turns as f64;
-    let pts  = (turns * 360).max(72) as usize; // finer for the figure-8
+//   φ(t) = 2π K t                 (K toroidal trips to close the {M/K} star)
+//   θ(t) = 2π M t                 (M poloidal dips — one per chord)
+//   ρ    = R + r cosθ,  r ≈ 0.8 R  (large ⇒ inner dips reach the hub)
+//
+// M is forced odd so the skip-2 star is a single continuous wire (gcd(M,2)=1).
+fn rodin(radius: f64, turns: u32, _pitch: f64) -> Vec<[f64; 3]> {
+    let m_raw = turns.max(5);
+    let m     = if m_raw % 2 == 0 { m_raw + 1 } else { m_raw }; // odd ⇒ single wire
+    let k     = 2u32;                          // skip every other node → {M/2} star
+    let r     = radius * 0.8;                  // large minor radius ⇒ visible star crossings
+    let pts   = (m * 240).max(240) as usize;   // fine sampling for the crossings
     (0..=pts)
         .map(|i| {
             let t   = i as f64 / pts as f64;
-            let phi = TAU * n * t;
-            let th  = 2.0 * TAU * n * t;
+            let phi = TAU * k as f64 * t;       // K toroidal trips
+            let th  = TAU * m as f64 * t;       // M poloidal dips
             let rho = radius + r * th.cos();
             [rho * phi.cos(), rho * phi.sin(), r * th.sin()]
         })
@@ -272,4 +295,57 @@ fn quat_rotate(p: [f64; 3], q: [f64; 4]) -> [f64; 3] {
         iy*qw + iw*(-qy) + iz*(-qx) - ix*(-qz),
         iz*qw + iw*(-qz) + ix*(-qy) - iy*(-qx),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{toroid, toroid_poloidal, rodin};
+    use std::f64::consts::PI;
+
+    /// Total toroidal winding number: unwrapped Σ|Δφ| / 2π of the path's
+    /// azimuthal angle φ = atan2(y, x).
+    fn toroidal_turns(path: &[[f64; 3]]) -> f64 {
+        let mut total = 0.0;
+        for w in path.windows(2) {
+            let a0 = w[0][1].atan2(w[0][0]);
+            let a1 = w[1][1].atan2(w[1][0]);
+            let mut d = a1 - a0;
+            while d >  PI { d -= 2.0 * PI; }
+            while d < -PI { d += 2.0 * PI; }
+            total += d.abs();
+        }
+        total / (2.0 * PI)
+    }
+
+    /// Smallest cylindrical radius √(x²+y²) the wire reaches.
+    fn min_rho(path: &[[f64; 3]]) -> f64 {
+        path.iter().map(|p| (p[0]*p[0] + p[1]*p[1]).sqrt()).fold(f64::MAX, f64::min)
+    }
+
+    #[test]
+    fn toroid_poloidal_rodin_are_distinct_topologies() {
+        let (r, n, pitch) = (0.05_f64, 12_u32, 0.006_f64);
+        let az  = toroid(r, n, pitch);            // T(1,N) — azimuthal
+        let pol = toroid_poloidal(r, n, pitch);   // T(N,1) — poloidal transpose
+        let rod = rodin(r, n, pitch);             // T(2,M) — star
+
+        let (t_az, t_pol, t_rod) = (toroidal_turns(&az), toroidal_turns(&pol), toroidal_turns(&rod));
+        println!("toroidal turns — azimuthal {t_az:.2}, poloidal {t_pol:.2}, rodin {t_rod:.2}");
+        println!("min ρ/R — azimuthal {:.2}, poloidal {:.2}, rodin {:.2}",
+            min_rho(&az)/r, min_rho(&pol)/r, min_rho(&rod)/r);
+
+        // Azimuthal makes ~1 toroidal trip; poloidal makes ~N (it's the transpose).
+        assert!(t_az < 2.0, "azimuthal toroid should make ~1 toroidal trip, got {t_az:.2}");
+        assert!(t_pol > 6.0, "poloidal toroid should make ~N toroidal trips, got {t_pol:.2}");
+        assert!(t_pol > 3.0 * t_az,
+            "azimuthal and poloidal toroids are not distinct (turns {t_az:.2} vs {t_pol:.2})");
+
+        // Rodin's large minor radius makes the wire dip near the hub; the toroids
+        // (thin tube) never approach the centre.
+        assert!(min_rho(&rod) < 0.5 * r,
+            "rodin should dip near the hub (min ρ {:.3} ≥ 0.5R)", min_rho(&rod));
+        assert!(min_rho(&az)  > 0.7 * r && min_rho(&pol) > 0.7 * r,
+            "toroids should stay near the major radius (az {:.3}, pol {:.3})",
+            min_rho(&az), min_rho(&pol));
+    }
 }

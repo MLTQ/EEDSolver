@@ -17,10 +17,73 @@ use crate::{
     error::SolverError,
     grid::{GpuGridState, YeeGrid},
     types::{
-        FieldMaximum, FieldName, HolonomyPath, HolonomyResult,
-        SliceAxis, SliceData, SliceRequest, VolumeData,
+        CoilEntity, FieldAsymmetry, FieldMaximum, FieldName, HolonomyPath,
+        HolonomyResult, SliceAxis, SliceData, SliceRequest, VolumeData,
     },
 };
+
+/// Directional asymmetry of Φ_g about the primary entity's axis (ORC-65c) — the
+/// thrust-direction indicator.  Σ|Φ_g| is accumulated in the two half-spaces
+/// split at the entity centre normal to its axis (orientation·ẑ); the ratio of
+/// the stronger half to the weaker, and which way it leans, is the prediction.
+/// Returns `None` if there is no Φ_g field.
+pub fn compute_phi_g_asymmetry(
+    ctx:      &GpuContext,
+    gstate:   &GpuGridState,
+    grid:     &YeeGrid,
+    entities: &[CoilEntity],
+) -> Result<Option<FieldAsymmetry>, SolverError> {
+    let entity = match entities.first() {
+        Some(e) => e,
+        None    => return Ok(None),
+    };
+
+    let pg  = gstate.readback(ctx, &gstate.phi_g, gstate.scalar_len())?;
+    let n1  = gstate.n1 as usize;
+    let dx  = grid.dx;
+    let ext = grid.extent;
+    let c   = entity.position_m;
+
+    // Device axis = orientation·ẑ (3rd column of the quaternion rotation matrix).
+    let axis = {
+        let [x, y, z, w] = entity.orientation.map(|v| v as f64);
+        let a = [2.0 * (x * z + w * y), 2.0 * (y * z - w * x), 1.0 - 2.0 * (x * x + y * y)];
+        let n = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt().max(1e-12);
+        [a[0] / n, a[1] / n, a[2] / n]
+    };
+
+    // Strongest |Φ_g| in each half-space, restricted to the FAR field — beyond a
+    // standoff from the device centre along the axis.  This is the directional
+    // signal a detector on each side would see; the near-electrode peaks are
+    // strong on both sides (symmetric core), so the drama lives in how much
+    // faster the field falls off on the large-plate side.  Standoff = ¼·extent.
+    let standoff = 0.25 * ext;
+    let (mut plus_peak, mut minus_peak) = (0.0f64, 0.0f64);
+    for iz in 0..n1 {
+        let z = -ext + iz as f64 * dx;
+        for iy in 0..n1 {
+            let y = -ext + iy as f64 * dx;
+            for ix in 0..n1 {
+                let v = (pg[ix + iy * n1 + iz * n1 * n1] as f64).abs();
+                if v == 0.0 { continue; }
+                let x = -ext + ix as f64 * dx;
+                let s = (x - c[0]) * axis[0] + (y - c[1]) * axis[1] + (z - c[2]) * axis[2];
+                if s.abs() < standoff { continue; }       // skip the near-device core
+                if s >= 0.0 { plus_peak = plus_peak.max(v); }
+                else        { minus_peak = minus_peak.max(v); }
+            }
+        }
+    }
+
+    if plus_peak + minus_peak <= 0.0 { return Ok(None); }
+
+    let leans_plus = plus_peak >= minus_peak;
+    let ratio = if leans_plus { plus_peak / minus_peak.max(1e-300) }
+                else          { minus_peak / plus_peak.max(1e-300) };
+    let lean = if leans_plus { axis } else { [-axis[0], -axis[1], -axis[2]] };
+
+    Ok(Some(FieldAsymmetry { axis, lean, ratio, plus_peak, minus_peak }))
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API

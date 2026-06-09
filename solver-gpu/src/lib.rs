@@ -137,7 +137,21 @@ impl OracleSolver {
 
         // ── AC J-source upload ────────────────────────────────────────────────
         // Pre-compute the normalised J₀ grid for AC injection (if any AC entities).
-        let has_ac = request.entities.iter().any(|e| e.coil.frequency_hz > 0.0);
+        // Only *current-carrying* types are AC sources: capacitors are
+        // voltage-driven (no current) and mass spheres carry no current at all,
+        // so a stale frequency_hz on those must NOT flip has_ac (ORC-1sw) — that
+        // routed a voltage source through current injection and warned about a
+        // current slider that doesn't exist.
+        let is_ac_current_source = |e: &CoilEntity| {
+            e.coil.frequency_hz > 0.0
+                && !matches!(
+                    e.coil.coil_type,
+                    CoilType::CapacitorSymmetric
+                        | CoilType::CapacitorAsymmetric
+                        | CoilType::MassSphere
+                )
+        };
+        let has_ac = request.entities.iter().any(|e| is_ac_current_source(e));
         if has_ac && !ac_segments.is_empty() {
             let n1     = (grid.n + 1) as usize;
             let origin = [-(grid.extent as f32); 3];
@@ -274,18 +288,22 @@ impl OracleSolver {
                         else { request.eed.gamma as f32 };
 
             if has_ac {
-                // Use the first AC entity's current and frequency for the source.
+                // Use the first AC *current-source* entity (same predicate as
+                // has_ac, so we never pick a voltage-driven capacitor — ORC-1sw).
                 // TODO: multi-entity AC superposition (different frequencies).
                 let ac_entity = request.entities.iter()
-                    .find(|e| e.coil.frequency_hz > 0.0)
+                    .find(|e| is_ac_current_source(e))
                     .unwrap(); // safe: has_ac guarantees at least one
 
-                // Open helix is voltage-driven: derive peak feed current from V₀/Z_ref.
-                // All other types use current_a directly (it's a closed-loop current).
-                let current_a = match ac_entity.coil.coil_type {
-                    crate::types::CoilType::OpenHelix =>
-                        (ac_entity.coil.voltage_v / biot::OPEN_HELIX_Z_REF) as f32,
-                    _ => ac_entity.coil.current_a as f32,
+                // Open circuits (open helix, or any winding with open_circuit set)
+                // are voltage-driven: peak feed current I₀ = V₀/Z_ref.  Closed
+                // loops use current_a directly.
+                let current_a = if ac_entity.coil.coil_type == CoilType::OpenHelix
+                    || ac_entity.coil.open_circuit
+                {
+                    (ac_entity.coil.voltage_v / biot::OPEN_HELIX_Z_REF) as f32
+                } else {
+                    ac_entity.coil.current_a as f32
                 };
                 let frequency_hz = ac_entity.coil.frequency_hz as f32;
                 gstate.run_fdtd_ac(
@@ -295,7 +313,7 @@ impl OracleSolver {
                 if current_a == 0.0 {
                     warnings.push(format!(
                         "AC injection: f={:.2}Hz but effective current = 0 A — no source injected. \
-                         Set Voltage > 0 V (open helix) or Current > 0 A in the geometry panel.",
+                         Set Voltage > 0 V (open circuit) or Current > 0 A in the geometry panel.",
                         frequency_hz
                     ));
                 } else {
@@ -311,9 +329,7 @@ impl OracleSolver {
             // Re-compute observables using evolved E = -∇φ - a_vel.
             gstate.run_observables(&self.ctx, &grid)?;
 
-            // Sustained (AC) drive: capture the *evolved* fields now, so the
-            // KK-direct coupling sees the dynamical EED scalar C the FDTD just
-            // produced rather than the pre-loop Coulomb-gauge snapshot (ORC-x7m).
+            // Sustained (AC) drive: capture the *evolved* fields now (ORC-x7m).
             if snapshot_after_fdtd {
                 gstate.snapshot_gem_sources(&self.ctx);
                 log::info!("GEM sources snapshotted post-FDTD (sustained AC drive)");
@@ -468,6 +484,22 @@ impl OracleSolver {
         let magnetic_helicity = postproc::compute_helicity(&self.ctx, &gstate, &grid);
         log::info!("Magnetic helicity ∫A·B d³x = {:.4e}", magnetic_helicity);
 
+        // Φ_g directional asymmetry — the thrust-direction indicator (ORC-65c).
+        let phi_g_asymmetry = if request.gem.enabled {
+            let a = postproc::compute_phi_g_asymmetry(
+                &self.ctx, &gstate, &grid, &request.entities,
+            )?;
+            if let Some(fa) = &a {
+                log::info!(
+                    "Φ_g asymmetry: {:.2}× toward [{:+.2}, {:+.2}, {:+.2}]",
+                    fa.ratio, fa.lean[0], fa.lean[1], fa.lean[2],
+                );
+            }
+            a
+        } else {
+            None
+        };
+
         // ── Volume extraction ────────────────────────────────────────────────
         let volume = if request.request_volume {
             // Guard: if the requested field isn't populated yet, fall back to B.
@@ -506,6 +538,7 @@ impl OracleSolver {
             magnetic_helicity,
             warnings,
             lead_points,
+            phi_g_asymmetry,
         })
     }
 }
