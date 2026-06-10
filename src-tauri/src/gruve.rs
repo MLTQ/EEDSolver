@@ -4,12 +4,13 @@
 //! HTTP for remote viewers, so this module serves the built frontend and mirrors
 //! the solver commands as JSON endpoints on one localhost port.
 
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::extract::{Path as AxumPath, State};
+use axum::http::{header, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
@@ -17,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use solver_gpu::OracleSolver;
 use tauri::{AppHandle, Manager};
 use tokio::net::TcpListener;
-use tower_http::services::{ServeDir, ServeFile};
 
 use crate::commands::{
     delete_hypothesis_entry, load_hypothesis_entries, save_hypothesis_entry, solve_request,
@@ -33,6 +33,7 @@ const ANNOUNCE_TTL_SECONDS: u64 = 60;
 #[derive(Clone)]
 struct GruveState {
     solver: Arc<OracleSolver>,
+    dist_dir: PathBuf,
 }
 
 #[derive(Debug)]
@@ -77,13 +78,6 @@ pub async fn start(app: AppHandle, solver: Arc<OracleSolver>) -> Result<u16, Str
         .map_err(|e| format!("Cannot read Gruve HTTP server address: {e}"))?;
     let port = addr.port();
 
-    let router = Router::new()
-        .route("/api/solver-status", get(get_solver_status_http))
-        .route("/api/solve", post(solve_http))
-        .route("/api/hypotheses", get(load_hypotheses_http))
-        .route("/api/hypotheses", post(save_hypothesis_http))
-        .route("/api/hypotheses/:id", delete(delete_hypothesis_http));
-
     let dist_dir = resolve_dist_dir(&app).unwrap_or_else(|| PathBuf::from("../dist"));
     if !dist_dir.join("index.html").is_file() {
         log::warn!(
@@ -91,12 +85,17 @@ pub async fn start(app: AppHandle, solver: Arc<OracleSolver>) -> Result<u16, Str
             dist_dir.display()
         );
     }
-    let static_assets =
-        ServeDir::new(&dist_dir).not_found_service(ServeFile::new(dist_dir.join("index.html")));
+
+    let router = Router::new()
+        .route("/api/solver-status", get(get_solver_status_http))
+        .route("/api/solve", post(solve_http))
+        .route("/api/hypotheses", get(load_hypotheses_http))
+        .route("/api/hypotheses", post(save_hypothesis_http))
+        .route("/api/hypotheses/:id", delete(delete_hypothesis_http));
 
     let router = router
-        .fallback_service(static_assets)
-        .with_state(GruveState { solver });
+        .fallback(get_static_asset_http)
+        .with_state(GruveState { solver, dist_dir });
 
     tauri::async_runtime::spawn(async move {
         if let Err(e) = axum::serve(listener, router.into_make_service()).await {
@@ -138,11 +137,35 @@ async fn load_hypotheses_http() -> Result<Json<Vec<crate::types::HypothesisEntry
     load_hypothesis_entries().await.map(Json).map_err(ApiError)
 }
 
-async fn delete_hypothesis_http(Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+async fn delete_hypothesis_http(AxumPath(id): AxumPath<String>) -> Result<StatusCode, ApiError> {
     delete_hypothesis_entry(id)
         .await
         .map(|_| StatusCode::NO_CONTENT)
         .map_err(ApiError)
+}
+
+async fn get_static_asset_http(
+    State(state): State<GruveState>,
+    uri: Uri,
+) -> Result<Response, ApiError> {
+    let relative_path = static_relative_path(uri.path());
+    let file_path = safe_dist_path(&state.dist_dir, relative_path)
+        .unwrap_or_else(|| state.dist_dir.join("index.html"));
+    let file_path = if file_path.is_file() {
+        file_path
+    } else {
+        state.dist_dir.join("index.html")
+    };
+
+    let bytes = tokio::fs::read(&file_path)
+        .await
+        .map_err(|e| ApiError(format!("Cannot read {}: {e}", file_path.display())))?;
+    let mime = mime_for_path(&file_path);
+
+    Response::builder()
+        .header(header::CONTENT_TYPE, mime)
+        .body(Body::from(bytes))
+        .map_err(|e| ApiError(format!("Cannot build static response: {e}")))
 }
 
 fn resolve_dist_dir(app: &AppHandle) -> Option<PathBuf> {
@@ -161,6 +184,49 @@ fn resolve_dist_dir(app: &AppHandle) -> Option<PathBuf> {
     candidates
         .into_iter()
         .find(|path| path.join("index.html").is_file())
+}
+
+fn static_relative_path(request_path: &str) -> &str {
+    let app_prefix = format!("/apps/{APP_ID}/");
+    if request_path == format!("/apps/{APP_ID}") {
+        return "index.html";
+    }
+
+    if let Some((_, rest)) = request_path.split_once(&app_prefix) {
+        return if rest.is_empty() { "index.html" } else { rest };
+    }
+
+    let trimmed = request_path.trim_start_matches('/');
+    if trimmed.is_empty() {
+        "index.html"
+    } else {
+        trimmed
+    }
+}
+
+fn safe_dist_path(dist_dir: &Path, relative_path: &str) -> Option<PathBuf> {
+    let mut path = PathBuf::from(dist_dir);
+    for component in Path::new(relative_path).components() {
+        match component {
+            Component::Normal(part) => path.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    Some(path)
+}
+
+fn mime_for_path(path: &Path) -> &'static str {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("css") => "text/css; charset=utf-8",
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("json") => "application/json; charset=utf-8",
+        Some("png") => "image/png",
+        Some("svg") => "image/svg+xml",
+        Some("wasm") => "application/wasm",
+        _ => "application/octet-stream",
+    }
 }
 
 async fn announce_loop(port: u16) {
@@ -192,5 +258,28 @@ async fn announce_loop(port: u16) {
         }
 
         tokio::time::sleep(Duration::from_secs(ANNOUNCE_TTL_SECONDS / 3)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::static_relative_path;
+
+    #[test]
+    fn strips_local_gruve_app_prefix() {
+        assert_eq!(
+            static_relative_path("/apps/oracle/assets/index.js"),
+            "assets/index.js"
+        );
+        assert_eq!(static_relative_path("/apps/oracle/"), "index.html");
+        assert_eq!(static_relative_path("/apps/oracle"), "index.html");
+    }
+
+    #[test]
+    fn strips_peer_gruve_app_prefix() {
+        assert_eq!(
+            static_relative_path("/peer/demo/node/apps/oracle/assets/index.css"),
+            "assets/index.css"
+        );
     }
 }

@@ -16,4 +16,5 @@ solver/models/__pycache__/
 
 src-tauri/target/
 
+target/
 target/debug/

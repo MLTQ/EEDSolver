@@ -14,9 +14,10 @@ Provides the HTTP surface Gruve needs for multiplayer access to the Tauri app. I
 - **Does**: Expose solver status, solve, hypothesis save/load/delete as JSON endpoints.
 - **Interacts with**: `SolveRequest`, `SolveResult`, and `HypothesisEntry` from `types.rs`.
 
-### `static_assets` / `resolve_dist_dir`
-- **Does**: Serve `dist/` with an `index.html` fallback for client routes.
+### `get_static_asset_http` / `static_relative_path`
+- **Does**: Serve `dist/` with an `index.html` fallback for client routes and strip Gruve app prefixes before resolving assets.
 - **Interacts with**: Vite build output and Tauri resource directories.
+- **Rationale**: Gruve serves apps under `/apps/<id>/` or peer paths containing `/apps/<id>/`; the backend must map those URLs back to files under `dist/`.
 
 ### `announce_loop`
 - **Does**: Re-posts app metadata to `http://127.0.0.1:8088/gruve/announce` every TTL/3 seconds.
