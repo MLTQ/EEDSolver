@@ -19,6 +19,10 @@ Provides the HTTP surface Gruve needs for multiplayer access to the Tauri app. I
 - **Interacts with**: Vite build output and Tauri resource directories.
 - **Rationale**: Gruve serves apps under `/apps/<id>/` or peer paths containing `/apps/<id>/`; the backend must map those URLs back to files under `dist/`.
 
+### `resolve_dist_dir`
+- **Does**: Finds the built frontend in source-tree `dist/` or Tauri resource `_up_/dist` locations.
+- **Rationale**: Raw Tauri binaries and packaged `.app` bundles do not run from the repository root, so the bridge must not rely on current working directory alone.
+
 ### `announce_loop`
 - **Does**: Re-posts app metadata to `http://127.0.0.1:8088/gruve/announce` every TTL/3 seconds.
 - **Interacts with**: Gruve agent; degrades quietly when the agent is not running.
@@ -29,7 +33,7 @@ Provides the HTTP surface Gruve needs for multiplayer access to the Tauri app. I
 |-----------|---------|------------------|
 | Gruve agent | `id`, `port`, and `upstreams.api` point to a listening localhost server | Renaming `APP_ID`, removing heartbeat, changing port ownership |
 | `src/lib/api.ts` | JSON endpoints live at `/api/*` behind the declared `api` upstream | Route shape or response JSON changes |
-| Remote browsers | `dist/index.html` and relative assets are served from any sub-path | Absolute asset paths or missing built assets |
+| Remote browsers | `dist/index.html` is found in source-tree and Tauri resource layouts; relative assets are served from any sub-path | Absolute asset paths or missing built assets |
 
 ## Notes
-- Packaged-app static serving depends on `dist/` being available as a file or bundled resource. Source/dev builds are covered by the repository `dist/` path.
+- Tauri copies the configured `../dist` resource as `_up_/dist`; raw binaries rely on executable-relative lookup for that shape.

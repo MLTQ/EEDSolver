@@ -173,17 +173,29 @@ fn resolve_dist_dir(app: &AppHandle) -> Option<PathBuf> {
 
     if let Ok(current_dir) = std::env::current_dir() {
         candidates.push(current_dir.join("dist"));
+        candidates.push(current_dir.join("_up_").join("dist"));
         candidates.push(current_dir.join("../dist"));
+    }
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            candidates.push(exe_dir.join("dist"));
+            candidates.push(exe_dir.join("_up_").join("dist"));
+            candidates.push(exe_dir.join("../dist"));
+        }
     }
 
     if let Ok(resource_dir) = app.path().resource_dir() {
         candidates.push(resource_dir.join("dist"));
+        candidates.push(resource_dir.join("_up_").join("dist"));
         candidates.push(resource_dir.join("../dist"));
     }
 
-    candidates
-        .into_iter()
-        .find(|path| path.join("index.html").is_file())
+    candidates.into_iter().find(|path| is_dist_dir(path))
+}
+
+fn is_dist_dir(path: &Path) -> bool {
+    path.join("index.html").is_file()
 }
 
 fn static_relative_path(request_path: &str) -> &str {
@@ -263,7 +275,9 @@ async fn announce_loop(port: u16) {
 
 #[cfg(test)]
 mod tests {
-    use super::static_relative_path;
+    use std::path::{Path, PathBuf};
+
+    use super::{is_dist_dir, static_relative_path};
 
     #[test]
     fn strips_local_gruve_app_prefix() {
@@ -281,5 +295,13 @@ mod tests {
             static_relative_path("/peer/demo/node/apps/oracle/assets/index.css"),
             "assets/index.css"
         );
+    }
+
+    #[test]
+    fn recognizes_tauri_resource_dist_shape() {
+        let path = PathBuf::from("target/release/_up_/dist");
+        if Path::new("target/release/_up_/dist/index.html").is_file() {
+            assert!(is_dist_dir(&path));
+        }
     }
 }
