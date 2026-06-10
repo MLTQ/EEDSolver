@@ -7,7 +7,9 @@
       "dependencies": {
         "@tauri-apps/api": "^2",
         "@tauri-apps/plugin-shell": "^2",
+        "gruve-sdk": "file:vendor/gruve-sdk",
         "plotly.js": "^2.32",
+        "plotly.js-basic-dist-min": "^2.35.3",
         "react": "^18.3",
         "react-dom": "^18.3",
         "react-plotly.js": "^2.6",
@@ -626,6 +628,8 @@
 
     "grid-index": ["grid-index@1.1.0", "", {}, "sha512-HZRwumpOGUrHyxO5bqKZL0B0GlUpwtCAzZ42sgxUPniu33R1LSFH5yrIcBCHjkctCAh3mtWKcKd9J4vDDdeVHA=="],
 
+    "gruve-sdk": ["gruve-sdk@file:vendor/gruve-sdk", {}],
+
     "has-flag": ["has-flag@4.0.0", "", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
 
     "has-hover": ["has-hover@1.0.1", "", { "dependencies": { "is-browser": "^2.0.1" } }, "sha512-0G6w7LnlcpyDzpeGUTuT0CEw05+QlMuGVk1IHNAlHrGJITGodjZu3x8BNDUMfKJSZXNB2ZAclqc1bvrd+uUpfg=="],
@@ -791,6 +795,8 @@
     "pirates": ["pirates@4.0.7", "", {}, "sha512-TfySrs/5nm8fQJDcBDuUng3VOUKsd7S+zqvbOTiGXHfxX4wK31ard+hoNuvkicM/2YFzlpDgABOevKSsB4G/FA=="],
 
     "plotly.js": ["plotly.js@2.35.3", "", { "dependencies": { "@plotly/d3": "3.8.2", "@plotly/d3-sankey": "0.7.2", "@plotly/d3-sankey-circular": "0.33.1", "@plotly/mapbox-gl": "1.13.4", "@turf/area": "^7.1.0", "@turf/bbox": "^7.1.0", "@turf/centroid": "^7.1.0", "base64-arraybuffer": "^1.0.2", "canvas-fit": "^1.5.0", "color-alpha": "1.0.4", "color-normalize": "1.5.0", "color-parse": "2.0.0", "color-rgba": "2.1.1", "country-regex": "^1.1.0", "css-loader": "^7.1.2", "d3-force": "^1.2.1", "d3-format": "^1.4.5", "d3-geo": "^1.12.1", "d3-geo-projection": "^2.9.0", "d3-hierarchy": "^1.1.9", "d3-interpolate": "^3.0.1", "d3-time": "^1.1.0", "d3-time-format": "^2.2.3", "fast-isnumeric": "^1.1.4", "gl-mat4": "^1.2.0", "gl-text": "^1.4.0", "has-hover": "^1.0.1", "has-passive-events": "^1.0.0", "is-mobile": "^4.0.0", "maplibre-gl": "^4.5.2", "mouse-change": "^1.4.0", "mouse-event-offset": "^3.0.2", "mouse-wheel": "^1.2.0", "native-promise-only": "^0.8.1", "parse-svg-path": "^0.1.2", "point-in-polygon": "^1.1.0", "polybooljs": "^1.2.2", "probe-image-size": "^7.2.3", "regl": "npm:@plotly/regl@^2.1.2", "regl-error2d": "^2.0.12", "regl-line2d": "^3.1.3", "regl-scatter2d": "^3.3.1", "regl-splom": "^1.0.14", "strongly-connected-components": "^1.0.1", "style-loader": "^4.0.0", "superscript-text": "^1.0.0", "svg-path-sdf": "^1.1.3", "tinycolor2": "^1.4.2", "to-px": "1.0.1", "topojson-client": "^3.1.0", "webgl-context": "^2.2.0", "world-calendars": "^1.0.3" } }, "sha512-7RaC6FxmCUhpD6H4MpD+QLUu3hCn76I11rotRefrh3m1iDvWqGnVqVk9dSaKmRAhFD3vsNsYea0OxnR1rc2IzQ=="],
+
+    "plotly.js-basic-dist-min": ["plotly.js-basic-dist-min@2.35.3", "", {}, "sha512-ZipAmyME0S5qWec6GDy2dxP+E6Qhi0X6eNwH6gy7m5YMKYSgrDYrc+/3PTPWpJsxcIMF0kqoOruX+SgH2VwOWg=="],
 
     "point-in-polygon": ["point-in-polygon@1.1.0", "", {}, "sha512-3ojrFwjnnw8Q9242TzgXuTD+eKiutbzyslcq1ydfu82Db2y+Ogbmyrkpv0Hgj31qwT3lbS9+QAAO/pIQM35XRw=="],
 

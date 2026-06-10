@@ -1,18 +1,17 @@
 # src-tauri/src/lib.rs
 
 ## Purpose
-Tauri application entry point. Wires together: managed state, plugins, commands, and the startup health-poll background task.
+Tauri application entry point. Wires together managed solver state, Tauri commands, and the Gruve HTTP bridge.
 
 ## Components
 - `run()` — configures and starts the Tauri app
-- `tauri_plugin_shell::init()` — enables sidecar process management (future: auto-launch solver)
-- `SolverClient::new()` as managed state — shared across all async commands
-- Background `wait_until_ready()` task — pre-warms the solver connection before the first user click
+- `Arc<OracleSolver>` as managed state — shared across Tauri commands and the Gruve HTTP server
+- `gruve::start()` — serves the built frontend/API on localhost and announces to Gruve
 
 ## Decisions
-- Background health poll on `setup` — means the frontend's first `get_solver_status` call likely returns `Ready` immediately instead of making the user wait for a poll
-- `tauri_plugin_shell` included now even though sidecar auto-launch isn't implemented yet — avoids a later Cargo.toml + capabilities change
+- Solver initialization remains fail-fast in `setup` so the UI never starts without a usable backend.
+- The same solver instance is used for IPC and HTTP to keep desktop and Gruve behavior consistent.
 
 ## Contracts
-- `SolverClient` must be managed before `invoke_handler` is called (Tauri enforces this at runtime)
-- The background health task is fire-and-forget — it logs but doesn't surface errors to the UI (the frontend polls `get_solver_status` for that)
+- `Arc<OracleSolver>` must be managed before `invoke_handler` is called.
+- `gruve::start()` must run after solver init so announced apps have a live API upstream.

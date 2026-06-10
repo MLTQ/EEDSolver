@@ -2,13 +2,14 @@
 //! `main.rs` is a thin shim that calls `run()`.
 
 mod commands;
+mod gruve;
 mod types;
 
-use tauri::Manager;
+use std::sync::Arc;
+
+use commands::{delete_hypothesis, get_solver_status, load_hypotheses, save_hypothesis, solve};
 use solver_gpu::OracleSolver;
-use commands::{
-    delete_hypothesis, get_solver_status, load_hypotheses, save_hypothesis, solve,
-};
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,10 +17,15 @@ pub fn run() {
         .setup(|app| {
             // Initialise GPU solver synchronously so state is available before
             // the first invoke call.  Fails fast if no GPU is found.
-            let solver = tauri::async_runtime::block_on(OracleSolver::new())
-                .map_err(|e| format!("GPU solver init failed: {e}"))?;
+            let solver = Arc::new(
+                tauri::async_runtime::block_on(OracleSolver::new())
+                    .map_err(|e| format!("GPU solver init failed: {e}"))?,
+            );
             log::info!("GPU solver online: {}", solver.gpu_name());
-            app.manage(solver);
+            app.manage(solver.clone());
+
+            let port = tauri::async_runtime::block_on(gruve::start(app.handle().clone(), solver))?;
+            log::info!("Gruve bridge ready on localhost:{port}");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

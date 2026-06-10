@@ -19,3 +19,6 @@ chrono      = { version = "0.4", features = ["serde"] }
 dirs        = "5"
 log         = "0.4"
 solver-gpu  = { path = "../solver-gpu" }
+axum        = "0.7"
+reqwest     = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tower-http  = { version = "0.6", features = ["fs"] }

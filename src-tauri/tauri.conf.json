@@ -27,6 +27,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "../dist"
+    ],
     "icon": [],
     "externalBin": []
   }

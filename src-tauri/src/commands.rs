@@ -12,14 +12,13 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use chrono::Utc;
 use tauri::State;
 
+use crate::types::{HypothesisEntry, SolveRequest, SolveResult, SolverState, SolverStatus};
 use solver_gpu::OracleSolver;
-use crate::types::{
-    HypothesisEntry, SolveRequest, SolveResult, SolverState, SolverStatus,
-};
 
 // ---------------------------------------------------------------------------
 // solve
@@ -29,10 +28,10 @@ use crate::types::{
 /// The frontend must keep the solve button disabled and show a spinner.
 #[tauri::command]
 pub async fn solve(
-    request:  SolveRequest,
-    solver:   State<'_, OracleSolver>,
+    request: SolveRequest,
+    solver: State<'_, Arc<OracleSolver>>,
 ) -> Result<SolveResult, String> {
-    solver.solve(&request).await.map_err(|e| e.to_string())
+    solve_request(&solver, request).await
 }
 
 // ---------------------------------------------------------------------------
@@ -43,13 +42,24 @@ pub async fn solve(
 /// Frontend polls this on launch to know when to enable the Solve button.
 #[tauri::command]
 pub async fn get_solver_status(
-    solver: State<'_, OracleSolver>,
+    solver: State<'_, Arc<OracleSolver>>,
 ) -> Result<SolverStatus, String> {
-    Ok(SolverStatus {
-        state:    SolverState::Ready,
-        message:  format!("GPU solver ready on {}", solver.gpu_name()),
+    Ok(solver_status(&solver))
+}
+
+pub async fn solve_request(
+    solver: &OracleSolver,
+    request: SolveRequest,
+) -> Result<SolveResult, String> {
+    solver.solve(&request).await.map_err(|e| e.to_string())
+}
+
+pub fn solver_status(solver: &OracleSolver) -> SolverStatus {
+    SolverStatus {
+        state: SolverState::Ready,
+        message: format!("GPU solver ready on {}", solver.gpu_name()),
         gpu_name: Some(solver.gpu_name()),
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -60,10 +70,19 @@ pub async fn get_solver_status(
 /// Returns the entry id.
 #[tauri::command]
 pub async fn save_hypothesis(
-    name:    String,
+    name: String,
     request: SolveRequest,
-    result:  SolveResult,
-    notes:   Option<String>,
+    result: SolveResult,
+    notes: Option<String>,
+) -> Result<String, String> {
+    save_hypothesis_entry(name, request, result, notes).await
+}
+
+pub async fn save_hypothesis_entry(
+    name: String,
+    request: SolveRequest,
+    result: SolveResult,
+    notes: Option<String>,
 ) -> Result<String, String> {
     let dir = hypothesis_dir()?;
     fs::create_dir_all(&dir).map_err(|e| format!("Cannot create hypothesis dir: {e}"))?;
@@ -72,17 +91,17 @@ pub async fn save_hypothesis(
     let id = format!("{}-{}", timestamp.format("%Y%m%dT%H%M%S"), slug(&name));
 
     let entry = HypothesisEntry {
-        id:        id.clone(),
+        id: id.clone(),
         name,
         timestamp,
         request,
-        maxima:    result.maxima,
+        maxima: result.maxima,
         notes,
     };
 
     let path = dir.join(format!("{id}.json"));
-    let json = serde_json::to_string_pretty(&entry)
-        .map_err(|e| format!("Serialisation failed: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(&entry).map_err(|e| format!("Serialisation failed: {e}"))?;
     fs::write(&path, json).map_err(|e| format!("Write failed: {e}"))?;
 
     log::info!("Saved hypothesis '{}' → {}", entry.name, path.display());
@@ -96,6 +115,10 @@ pub async fn save_hypothesis(
 /// Load all saved hypothesis entries, sorted newest-first.
 #[tauri::command]
 pub async fn load_hypotheses() -> Result<Vec<HypothesisEntry>, String> {
+    load_hypothesis_entries().await
+}
+
+pub async fn load_hypothesis_entries() -> Result<Vec<HypothesisEntry>, String> {
     let dir = hypothesis_dir()?;
     if !dir.exists() {
         return Ok(vec![]);
@@ -105,11 +128,13 @@ pub async fn load_hypotheses() -> Result<Vec<HypothesisEntry>, String> {
         .map_err(|e| format!("Cannot read hypothesis dir: {e}"))?
         .filter_map(|entry| {
             let entry = entry.ok()?;
-            let path  = entry.path();
-            if path.extension()?.to_str()? != "json" { return None; }
+            let path = entry.path();
+            if path.extension()?.to_str()? != "json" {
+                return None;
+            }
             let content = fs::read_to_string(&path).ok()?;
             match serde_json::from_str::<HypothesisEntry>(&content) {
-                Ok(h)  => Some(h),
+                Ok(h) => Some(h),
                 Err(e) => {
                     log::warn!("Failed to parse hypothesis {}: {e}", path.display());
                     None
@@ -129,7 +154,11 @@ pub async fn load_hypotheses() -> Result<Vec<HypothesisEntry>, String> {
 /// Remove a hypothesis entry by id.
 #[tauri::command]
 pub async fn delete_hypothesis(id: String) -> Result<(), String> {
-    let dir  = hypothesis_dir()?;
+    delete_hypothesis_entry(id).await
+}
+
+pub async fn delete_hypothesis_entry(id: String) -> Result<(), String> {
+    let dir = hypothesis_dir()?;
     let path = dir.join(format!("{id}.json"));
     if path.exists() {
         fs::remove_file(&path).map_err(|e| format!("Delete failed: {e}"))?;
@@ -150,7 +179,13 @@ fn hypothesis_dir() -> Result<PathBuf, String> {
 
 fn slug(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_alphanumeric() { c.to_lowercase().next().unwrap() } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c.to_lowercase().next().unwrap()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .split('-')
         .filter(|s| !s.is_empty())

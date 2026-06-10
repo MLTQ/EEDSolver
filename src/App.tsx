@@ -8,6 +8,16 @@ import { LegendPanel }   from "./components/LegendPanel";
 import { SliceViewer }   from "./components/SliceViewer";
 import { VolumeViewer }  from "./components/VolumeViewer";
 import { HypothesisLog } from "./components/HypothesisLog";
+import {
+  isFieldName,
+  isGruveSharedSession,
+  isSolveRequest,
+  isSolveResult,
+  joinOracleSession,
+  ORACLE_SESSION_KEYS,
+  type OracleSession,
+  type OracleSessionKey,
+} from "./lib/multiplayer";
 
 const DEFAULT_FIELD: FieldName = "B_magnitude";
 
@@ -24,8 +34,61 @@ export default function App() {
   const [error,         setError]         = useState<string | null>(null);
   const [showHistory,   setShowHistory]   = useState(false);
   const [showLegend,    setShowLegend]    = useState(false);
+  const [gruvePeers,    setGruvePeers]    = useState(0);
+  const [gruveShared,   setGruveShared]   = useState(false);
 
   const isSolvingRef = useRef(false);
+  const sessionRef = useRef<OracleSession | null>(null);
+  const suppressPublishRef = useRef<Set<OracleSessionKey>>(new Set());
+  const lastRemoteChangeRef = useRef(0);
+
+  useEffect(() => {
+    const session = joinOracleSession(setGruvePeers);
+    sessionRef.current = session;
+    setGruveShared(isGruveSharedSession());
+
+    const unsubscribe = session.state.subscribe((key, value) => {
+      if (key === ORACLE_SESSION_KEYS.request && isSolveRequest(value)) {
+        suppressPublishRef.current.add(ORACLE_SESSION_KEYS.request);
+        lastRemoteChangeRef.current = Date.now();
+        setRequest(value);
+      }
+
+      if (key === ORACLE_SESSION_KEYS.selectedField && isFieldName(value)) {
+        suppressPublishRef.current.add(ORACLE_SESSION_KEYS.selectedField);
+        lastRemoteChangeRef.current = Date.now();
+        setSelectedField(value);
+      }
+
+      if (key === ORACLE_SESSION_KEYS.result && isSolveResult(value)) {
+        lastRemoteChangeRef.current = Date.now();
+        setResult(value);
+        setError(value.warnings.length ? `Warnings: ${value.warnings.join("; ")}` : null);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      session.leave();
+      sessionRef.current = null;
+    };
+  }, []);
+
+  const publishSessionState = useCallback((key: OracleSessionKey, value: unknown) => {
+    if (suppressPublishRef.current.delete(key)) return;
+    sessionRef.current?.state.set(key, value);
+  }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      publishSessionState(ORACLE_SESSION_KEYS.request, request);
+    }, 200);
+    return () => clearTimeout(t);
+  }, [publishSessionState, request]);
+
+  useEffect(() => {
+    publishSessionState(ORACLE_SESSION_KEYS.selectedField, selectedField);
+  }, [publishSessionState, selectedField]);
 
   // Poll solver status until ready
   useEffect(() => {
@@ -58,6 +121,7 @@ export default function App() {
       };
       const r = await solve(req);
       setResult(r);
+      publishSessionState(ORACLE_SESSION_KEYS.result, r);
       if (r.warnings.length) setError(`Warnings: ${r.warnings.join("; ")}`);
     } catch (e) {
       setError(String(e));
@@ -65,13 +129,14 @@ export default function App() {
       isSolvingRef.current = false;
       setIsSolving(false);
     }
-  }, [request, selectedField]);
+  }, [publishSessionState, request, selectedField]);
 
   const solverReady = solverStatus.state === "ready";
 
   // Auto-solve 750 ms after any parameter change (while solver is ready).
   useEffect(() => {
     if (!solverReady) return;
+    if (Date.now() - lastRemoteChangeRef.current < 1000) return;
     const t = setTimeout(handleSolve, 750);
     return () => clearTimeout(t);
   }, [handleSolve, solverReady]);
@@ -112,6 +177,12 @@ export default function App() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {gruveShared && (
+            <span className="text-xs text-emerald-400/80 tabular-nums">
+              Gruve {gruvePeers}
+            </span>
+          )}
+
           {/* Max value chip for selected field */}
           {result && (() => {
             const mx = result.maxima.find(m => m.field === selectedField);

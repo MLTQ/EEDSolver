@@ -1,9 +1,13 @@
 import React, { useMemo } from "react";
-// @ts-expect-error — react-plotly.js types are loose
-import Plot from "react-plotly.js";
+// @ts-expect-error — factory export has no bundled declaration.
+import createPlotlyComponent from "react-plotly.js/factory";
+// @ts-expect-error — basic dist is untyped but avoids unused Mapbox/font loaders.
+import Plotly from "plotly.js-basic-dist-min";
 import type { FieldName, SliceAxis, SliceData, SolveResult } from "../../lib/fieldTypes";
 import { FIELD_LABELS } from "../../lib/fieldTypes";
 import { FIELD_COLORMAP, DEFAULT_COLORMAP, getColorscale } from "../../lib/colormap";
+
+const Plot = createPlotlyComponent(Plotly);
 
 interface Props {
   result:        SolveResult | null;
