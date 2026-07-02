@@ -10,13 +10,15 @@
 //
 // NOTE on □C = µ₀∂μJμ: that clean identity is the *decoupled* (van Vlaenderen)
 // EED result, where □φ=ρ/ε₀ and □A=µ₀J.  This solver instead evolves the
-// CANONICAL coupled, longitudinally-propagating potentials (fdtd_em.wgsl;
-// FIELD_THEORY.md 2026-05-29), so C does NOT obey that identity exactly — but it
-// is still dynamical and still sourced by ∂μJμ≠0 at open-circuit terminations.
-// C is computed here as a diagnostic from the evolved (φ, A); its dominant ~62%
-// is the longitudinal ∇·A, which radiates at c under the chosen A-equation.
-// Initial C=0 (static Biot-Savart) persists for closed-loop coils until an
-// open-circuit / time-varying source (∇·J ≠ 0 at the tips) injects it.
+// BESPOKE coupled, longitudinally-propagating potentials (fdtd_em.wgsl;
+// FIELD_THEORY.md status note, 2026-07-02), so C does NOT obey that identity —
+// it is dynamical, sourced both by ∂μJμ≠0 at open-circuit terminations AND by
+// the γ cross-coupling from any oscillating A (a closed circuit retains ~68% of
+// the open-helix C; closed_circuit_control.rs).  C is computed here as a
+// diagnostic from the evolved (φ, A); its dominant ~62% is the longitudinal
+// ∇·A, which radiates at the coupled branch speeds 0.618c/1.618c (γ=1), not at
+// c (eed_gamma1_dispersion.rs).  Initial C=0 (static Biot-Savart) persists for
+// closed-loop coils until a time-varying source injects it.
 //
 // Bindings:
 //   0  a_vec    storage read   n1³ × 4·f32

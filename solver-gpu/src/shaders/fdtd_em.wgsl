@@ -26,9 +26,14 @@
 //      A (the ∇·A piece) is non-propagating gauge.  But ∇·A is the dominant
 //      ~62% of the EED scalar C = ∇·A + (1/c²)∂φ/∂t (measured, AC open helix),
 //      and the whole premise is that C is a *physical, propagating* deleted DOF.
-//      Keeping the bare c²∇²A lets ∇·A — hence C's dominant half — radiate at c
-//      to a detector.  This is a modeling commitment (coupled, not van
-//      Vlaenderen's decoupled □φ=ρ/ε₀, □A=µ₀J); experiment adjudicates.
+//      Keeping the bare c²∇²A lets ∇·A — hence C's dominant half — radiate to a
+//      detector.  NOT at c, though: the longitudinal sector disperses as
+//      (c²k²−ω²)² = γ²ω²c²k², i.e. ω± = ck(√(γ²+4)∓γ)/2 → 0.618c and 1.618c at
+//      γ=1 (golden ratio; ω₊ superluminal — the model is acausal in some frame).
+//      Derived + GPU-verified 2026-07-02 (eed_gamma1_dispersion.rs, ORC-0r9).
+//      This is a bespoke modeling commitment (coupled; NOT van Vlaenderen's
+//      decoupled □φ=ρ/ε₀, □A=µ₀J, which is what the published EED action
+//      yields); experiment adjudicates.  See FIELD_THEORY.md status note.
 //
 // Leapfrog (kick then drift), Gauss-Seidel-ordered in the cross-coupling:
 //   phi_vel^{n+1} = phi_vel^n  +  dt · [c²∇²φ^n  − γ·c²·div(a_vel^n)]

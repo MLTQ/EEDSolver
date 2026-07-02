@@ -73,8 +73,12 @@ Scalar field driven by divergence of current (longitudinal source):
 
 where the source term:
 ```
-S_φ = -c⁻¹ ∂(∇·A)/∂t ≈ (1/μ₀ε₀) ∇·J   (magnetostatic limit)
+S_φ = -c⁻² ∂(∇·A)/∂t ≈ -(1/μ₀ε₀) ∇·J   (magnetostatic limit)
 ```
+(Coefficient note, 2026-07-02: the temporal term carries c⁻² — matching C's
+(1/c²)∂φ/∂t — not the c⁻¹ this file previously showed, and the sign here now
+matches the Source Term Construction section below. The overall normalization
+of S_φ is heuristic in any case; α, β, γ are free parameters that absorb it.)
 
 In the static limit with a prescribed current distribution, S_φ is computed
 directly from **J** without solving for **A** first. This is the cheapest
@@ -107,15 +111,50 @@ When α > 0: scalar field has a characteristic decay length λ = 1/α (Yukawa-li
 ### Time-Domain EED (FDTD, `solver-gpu`)
 
 The static weak forms above govern the legacy Python solver. The GPU solver
-(`solver-gpu`) evolves the **potential-primary, time-domain** EED system. It is
-a *distinct modeling commitment* from van Vlaenderen's decoupled EED, chosen
-deliberately (see Decision Log 2026-05-29). The equations of motion (vacuum,
-single coupling knob γ; γ=1 = full EED, γ=0 = Maxwell/Lorenz):
+(`solver-gpu`) evolves a **potential-primary, time-domain** system. The
+equations of motion (vacuum, single coupling knob γ; γ=0 = Maxwell/Lorenz):
 
 ```
 ∂²φ/∂t² = c²∇²φ − γ·c²·∂(∇·A)/∂t
 ∂²A/∂t² = c²∇²A − γ·∇(∂φ/∂t)        ( + c²µ₀J  source, injected separately )
 ```
+
+**Status of this system — read before citing it (revised 2026-07-02):** this
+"coupled form" is a **bespoke Oracle-specific model**, not a published theory.
+It was constructed by (a) deleting the −c²∇(∇·A) term from the ungauged
+Maxwell A-equation and (b) postulating a second-order φ-equation — at γ=1
+equivalent to ∂C/∂t = ∇²φ — in place of the Gauss-law constraint (whose
+∂ₜ(∇·A) term carries the *opposite* sign; the φ-equation here is not Gauss's
+law "promoted"). Every published EED variant we cite (Woodside, van
+Vlaenderen–Waser, Hively–Giakos, Stueckelberg/Aharonov-Bohm electrodynamics)
+instead yields the **decoupled** □φ = ρ/ε₀, □A = µ₀J from an action principle.
+The coupled form, as far as we can determine, follows from no action, is not
+Lorentz covariant (the surviving ∇(∇·A)-shaped terms pick out the lab frame),
+and admits superluminal longitudinal propagation (see dispersion below). An
+earlier version of this document called the two forms "equally derivable" —
+that overstated it. What remains true: the coupled form deliberately *retains*
+a dynamical, radiating scalar sector that the decoupled derivation evaporates,
+which is the phenomenon this instrument exists to model; it is simulated as an
+explicit hypothesis, and experiment adjudicates.
+
+**Longitudinal dispersion (derived 2026-07-02, verified in
+`solver-gpu/tests/eed_gamma1_dispersion.rs`):** Fourier analysis of the
+longitudinal sector (d ≡ ∇·A) gives
+
+```
+φ̈ = −c²k²φ − γc²ḋ        →    (c²k² − ω²)² = γ²ω²c²k²
+d̈ = −c²k²d + γk²φ̇        →    ω± = ck·(√(γ²+4) ∓ γ)/2
+```
+
+Two non-dispersive branches. At γ=1 they propagate at **(√5−1)/2·c ≈ 0.618c**
+and **(√5+1)/2·c ≈ 1.618c** — golden-ratio multiples of c, NOT c. Measured on
+a 96³ grid (longitudinal A=∇G packet): γ=0 control front at 1.004c; γ=1 front
+at 1.51c (φ·c minus second-order-stencil dispersion). Consequences: (1) any
+claim that the longitudinal ∇·A half of C "radiates at c" is wrong — earlier
+versions of this file said exactly that, three times; (2) timing/wavelength
+predictions for scalar-signal detection must use ω±, not c; (3) the ω₊ branch
+is superluminal — the model is acausal in some frame. Transverse modes are
+untouched by the coupling and propagate at c as usual.
 
 The EED scalar (the "deleted 7th DOF") is a **diagnostic** of the evolved
 potentials:
@@ -139,8 +178,10 @@ deleted-DOF thesis, both load-bearing — do not "fix" without re-reading this):
    the *longitudinal* ∇·A is non-propagating gauge. But the measured EED scalar
    is **~62% longitudinal ∇·A** (AC open helix; the other ~38% is the temporal
    (1/c²)∂φ/∂t half, same sign, from the γ cross-coupling). Keeping bare c²∇²A
-   lets that dominant half **radiate at c** to a detector — which is the entire
-   point of simulating a *physical, propagating* deleted DOF.
+   makes that dominant half **radiate** to a detector — which is the entire
+   point of simulating a *physical, propagating* deleted DOF. NOTE (2026-07-02):
+   it radiates at the golden-ratio branch speeds 0.618c/1.618c derived above,
+   **not at c** as this bullet formerly claimed.
 
 **Stability:** the γ cross-coupling is a skew longitudinal sub-update
 ([[1,−iβ],[−iβ,1]], |λ|=√(1+β²)>1 — unconditionally unstable if fused). Fixed by
@@ -151,10 +192,33 @@ factor. See ORC-4eg.
 **Relation to the decoupled reading:** van Vlaenderen's EED gives □φ=ρ/ε₀,
 □A=µ₀J (cross-coupling cancels), making C obey □C=µ₀∂µJµ exactly but rendering
 the longitudinal sector non-propagating and the temporal half zero (no ρ is
-injected). That is a different, equally-derivable theory. Both cannot be true;
-**the experiment decides.** This solver commits to the coupled form because it
-*retains* the scalar/gravitational terms that the decoupled derivation
-evaporates — the terms this project exists to predict and test.
+injected). That is the form the published Lagrangian actually yields (see the
+status note above); the coupled form is Oracle's own construction. Both cannot
+be true; **the experiment decides.** This solver commits to the coupled form
+because it *retains* the scalar/gravitational terms that the decoupled
+derivation evaporates — the terms this project exists to predict and test.
+
+**CENTRAL CAVEAT — the source model violates charge conservation (promoted
+from the 2026-05-29 OPEN item; quantified 2026-07-02):** the solver injects J
+only, never ρ. A real circuit conserves 4-current (∂µJµ = ∂ₜρ + ∇·J = 0
+identically — charge piles up wherever current dies), and in every published
+EED variant C is sourced *only* by ∂µJµ ≠ 0, so a faithful source model would
+produce **zero** C through that channel. Oracle's open-tip C therefore rides on
+a deliberate idealization: injecting ∇·J ≠ 0 with no compensating ρ.
+Quantified in `solver-gpu/tests/closed_circuit_control.rs` (48³, γ=1, 1 GHz
+AC helix, identical drive): the bare open helix has a genuine ±1 A current
+monopole at each tip (∫∇·J dV = 1.11 A measured); adding return leads that
+close the circuit collapses the monopole to 0.12 A rasterization residue, yet
+**max|C| only drops from 2.81e-5 to 1.90e-5 — 68% of the C signal survives
+closure.** Reading: under the *coupled* dynamics, most of C is generated by
+the cross-coupling from any oscillating A (tips or no tips) and would survive
+a faithful, charge-conserving circuit model; only ~1/3 of the "tip signature"
+is the truncation artifact. The flip side: that surviving 68% exists *because*
+of the bespoke coupled EOM — in the decoupled reading a charge-conserving
+circuit produces no C at all. Any lab prediction pitched to experimenters must
+say which of these two claims it is making, and spatial predictions keyed to
+wire terminations (end-cap φ, "toroid confines B but not φ") should be re-run
+with leads modeled before hardware is positioned around them.
 
 ---
 
@@ -236,6 +300,15 @@ largest, so lab sensors can be positioned optimally. Key EED signatures to look 
    EED is correct (since φ sources from ∇·J at terminations). This is a
    strong discriminating test.
 
+**Caveat on predictions 1 and 4 (2026-07-02):** both are keyed to ∇·J ≠ 0 at
+wire *terminations* — but a real energized coil has feed leads completing the
+circuit, so ∇·J = 0 along the whole loop and the "termination" signature
+depends on where the modeled circuit is truncated. The closed-circuit control
+(`closed_circuit_control.rs`; see the Central Caveat above) shows ~68% of the
+time-domain C survives circuit closure under the coupled dynamics, so a
+leads-included signature exists in that model — but it is weaker and its
+spatial pattern should be recomputed with leads before positioning sensors.
+
 ---
 
 ## References
@@ -311,6 +384,38 @@ largest, so lab sensors can be positioned optimally. Key EED signatures to look 
   longitudinal A_g stays propagating (c²∇²A_g, no −c²∇(∇·A_g)). GEM EOM as
   implemented: ∂²Φ_g/∂t²=c²∇²Φ_g − c²∂ₜ(∇·A_g) + κ_G·∂ₜC ; ∂²A_g/∂t²=c²∇²A_g −
   ∇(∂ₜΦ_g) + κ_G·∇C. AC open helix now gives a finite, non-zero Φ_g.
+- **2026-07-02** (ORC-0r9) **Longitudinal dispersion derived and measured; the
+  "radiates at c" claim was WRONG.** Fourier analysis of the coupled EOM's
+  longitudinal sector gives (c²k²−ω²)² = γ²ω²c²k², i.e. ω± = ck(√(γ²+4)∓γ)/2:
+  two branches at 0.618c and 1.618c for γ=1 (golden ratio; ω₊ superluminal).
+  Verified two ways: eigen-decomposition of the exact discrete Gauss-Seidel
+  one-step update matrix (|λ|=1, ω/ck = 0.618/1.617 at kΔx=0.1) and a GPU
+  front-speed measurement (`eed_gamma1_dispersion.rs`: γ=0 control 1.004c,
+  γ=1 front 1.51c). All "radiates at c" language in this file corrected;
+  detector-timing predictions must use ω±. The ω₊ > c branch means the coupled
+  model is acausal in some frame — acknowledged as a property of the bespoke
+  form, not patched.
+- **2026-07-02** (ORC-iqn) **Framing corrected: the coupled form is bespoke.**
+  The 2026-05-29 entries call the coupled and decoupled forms "equally
+  derivable" — overstated. The decoupled □φ=ρ/ε₀, □A=µ₀J follows from the
+  standard EED/Stueckelberg action; the coupled form follows from no action we
+  can identify, is not Lorentz covariant, and its φ-equation is a postulate
+  (≡ ∂ₜC = ∇²φ at γ=1), not Gauss's law. Simulating it remains a legitimate
+  explicit hypothesis; presenting it as standard EED does not. Status note
+  added at the top of the time-domain section.
+- **2026-07-02** (ORC-mlo) **Closed-circuit control quantified the source
+  idealization.** Open helix vs same helix + return leads, identical AC drive
+  (48³, γ=1, 1 GHz): tip monopole ∫∇·J dV = 1.11 A → 0.12 A on closure, but
+  max|C| = 2.81e-5 → 1.90e-5 (**68% survives**). So under the coupled dynamics
+  most of C comes from the γ cross-coupling (any oscillating A), not the ∂µJµ
+  tip channel; ~1/3 of the tip signature is the truncated-circuit artifact. In
+  the decoupled reading a closed circuit gives C≈0 — so "C detected from a
+  closed-loop device" would discriminate the two readings. This also CORRECTS
+  the 2026-05-29 "Φ_g = κ_G·C is ~62% derivation-robust" claim: in the
+  decoupled reading with conserved sources C≡0 and the residual ∇·A is
+  gauge, so nothing survives that reading for closed circuits; the 62/38
+  split is a property of the coupled model, not evidence for it. The OPEN
+  ρ-injection item from 2026-05-29 is now the Central Caveat section above.
 - **2026-06-03** GEM **mass sources** ρ_m, J_m wired (ORC-0tl): ordinary matter
   sources the gravitational sector independently of the EED κ_G channel. Gravity
   ATTRACTS, hence +4πG (vs EM's −1/ε₀). Static/elliptic form (solved directly):
