@@ -1,0 +1,1520 @@
+{
+  "collection_date": "2026-09-22",
+  "scope": "Targeted EED and EM–gravity collection, including static solid-dielectric Brown claims; not a systematic review or proof of unification",
+  "sources": [
+    {
+      "id": "R01",
+      "authors": "Aharonov, Y. and Bohm, D.",
+      "year": 1959,
+      "title": "Significance of Electromagnetic Potentials in the Quantum Theory",
+      "venue": "Physical Review 115, 485–491",
+      "doi": "10.1103/PhysRev.115.485",
+      "arxiv": "",
+      "url": "https://journals.aps.org/pr/abstract/10.1103/PhysRev.115.485",
+      "category": "Foundations",
+      "assessment": "Established quantum effect",
+      "annotation": "Read first to separate gauge-invariant interference from a proposed new local force. The Aharonov–Bohm phase does not, by itself, establish a locally measurable divergence of A or anomalous gravity.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "download": {
+        "status": "link only; no open PDF selected"
+      },
+      "crossref": {
+        "title": [
+          "Significance of Electromagnetic Potentials in the Quantum Theory"
+        ],
+        "container-title": [
+          "Physical Review"
+        ],
+        "volume": "115",
+        "issue": "3",
+        "page": "485-491",
+        "published": {
+          "date-parts": [
+            [
+              1959,
+              8,
+              1
+            ]
+          ]
+        },
+        "type": "journal-article",
+        "DOI": "10.1103/physrev.115.485"
+      }
+    },
+    {
+      "id": "R02",
+      "authors": "Aharonov, Y. and Bohm, D.",
+      "year": 1963,
+      "title": "Further Discussion of the Role of Electromagnetic Potentials in the Quantum Theory",
+      "venue": "Physical Review 130, 1625–1632",
+      "doi": "10.1103/PhysRev.130.1625",
+      "arxiv": "",
+      "url": "https://journals.aps.org/pr/abstract/10.1103/PhysRev.130.1625",
+      "category": "Foundations",
+      "assessment": "Historical theoretical extension",
+      "annotation": "Trace the AB electrodynamics lineage here. Distinguish this extension from the experimentally established 1959 interference effect; experimental confirmation of that effect does not validate every later modification.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "download": {
+        "status": "link only; no open PDF selected"
+      }
+    },
+    {
+      "id": "R03",
+      "authors": "Woodside, Dale A.",
+      "year": 1999,
+      "title": "Uniqueness theorems for classical four-vector fields in Euclidean and Minkowski spaces",
+      "venue": "Journal of Mathematical Physics 40, 4911–4943",
+      "doi": "10.1063/1.533007",
+      "arxiv": "",
+      "url": "https://researchers.mq.edu.au/en/publications/uniqueness-theorems-for-classical-four-vector-fields-in-euclidean/",
+      "category": "Foundations",
+      "assessment": "Mathematical result",
+      "annotation": "The source behind the repo’s uniqueness claims. A reconstruction or uniqueness theorem needs its hypotheses and boundary data; it does not establish which dynamical action nature uses or experimentally demonstrate a new polarization.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "download": {
+        "status": "link only; no open PDF selected"
+      },
+      "crossref": {
+        "title": [
+          "Uniqueness theorems for classical four-vector fields in Euclidean and Minkowski spaces"
+        ],
+        "container-title": [
+          "Journal of Mathematical Physics"
+        ],
+        "volume": "40",
+        "issue": "10",
+        "page": "4911-4943",
+        "published": {
+          "date-parts": [
+            [
+              1999,
+              10,
+              1
+            ]
+          ]
+        },
+        "type": "journal-article",
+        "DOI": "10.1063/1.533007"
+      }
+    },
+    {
+      "id": "R04",
+      "authors": "Woodside, Dale A.",
+      "year": 2009,
+      "title": "Three-vector and scalar field identities and uniqueness theorems in Euclidean and Minkowski spaces",
+      "venue": "American Journal of Physics 77, 438–446",
+      "doi": "10.1119/1.3076300",
+      "arxiv": "",
+      "url": "https://researchers.mq.edu.au/en/publications/three-vector-and-scalar-field-identities-and-uniqueness-theorems-/",
+      "category": "Foundations",
+      "assessment": "Mathematical result",
+      "annotation": "A shorter route into the decomposition theorems and their transverse/longitudinal classes. Keep field decomposition distinct from a Hamiltonian count of physical degrees of freedom.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "download": {
+        "status": "link only; no open PDF selected"
+      },
+      "crossref": {
+        "title": [
+          "Three-vector and scalar field identities and uniqueness theorems in Euclidean and Minkowski spaces"
+        ],
+        "container-title": [
+          "American Journal of Physics"
+        ],
+        "volume": "77",
+        "issue": "5",
+        "page": "438-446",
+        "published": {
+          "date-parts": [
+            [
+              2009,
+              5,
+              1
+            ]
+          ]
+        },
+        "type": "journal-article",
+        "DOI": "10.1119/1.3076300"
+      }
+    },
+    {
+      "id": "R05",
+      "authors": "Ruegg, Henri and Ruiz-Altaba, Marti",
+      "year": 2004,
+      "title": "The Stueckelberg Field",
+      "venue": "International Journal of Modern Physics A 19, 3265–3347",
+      "doi": "10.1142/S0217751X04019755",
+      "arxiv": "hep-th/0304245",
+      "url": "https://arxiv.org/abs/hep-th/0304245",
+      "category": "Foundations",
+      "assessment": "Established formalism; model-dependent applications",
+      "annotation": "Explains the gauge-invariant massive-vector construction. Useful for preventing the conflation of a Stueckelberg compensator, a gauge-fixing term, and a new observable scalar. These are different physical commitments.",
+      "pdf_url": "https://arxiv.org/pdf/hep-th/0304245v2",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "The Stueckelberg Field",
+      "verified_authors": [
+        "Ruegg, Henri",
+        "Ruiz-Altaba, Marti"
+      ],
+      "preprint_date": "2003/04/29",
+      "arxiv_version": "v2",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R05.pdf",
+        "bytes": 749895,
+        "sha256": "add99ecb8219781a9a54c4f18ac398b07773b3dab3168e905de23a883efe358b",
+        "pages": 58,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/hep-th/0304245v2"
+      },
+      "crossref": {
+        "title": [
+          "THE STUECKELBERG FIELD"
+        ],
+        "container-title": [
+          "International Journal of Modern Physics A"
+        ],
+        "volume": "19",
+        "issue": "20",
+        "page": "3265-3347",
+        "published": {
+          "date-parts": [
+            [
+              2004,
+              8,
+              10
+            ]
+          ]
+        },
+        "type": "journal-article",
+        "DOI": "10.1142/s0217751x04019755"
+      },
+      "metadata_note": "Crossref lists pages 3265–3347; arXiv journal-reference text lists 3265–3348. Publisher-registered pagination is used here."
+    },
+    {
+      "id": "R06",
+      "authors": "van Vlaenderen, Koen J.",
+      "year": 2003,
+      "title": "A generalisation of classical electrodynamics for the prediction of scalar field effects",
+      "venue": "arXiv preprint",
+      "doi": "",
+      "arxiv": "physics/0305098",
+      "url": "https://arxiv.org/abs/physics/0305098",
+      "category": "Scalar and longitudinal EED",
+      "assessment": "Speculative extension",
+      "annotation": "Accessible author preprint in the van Vlaenderen line. Extract its definitions and source equations before comparing with Oracle. This is a distinct 2003 paper, not the joint van Vlaenderen–Waser 2001 article.",
+      "pdf_url": "https://arxiv.org/pdf/physics/0305098v1",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "A generalisation of classical electrodynamics for the prediction of scalar field effects",
+      "verified_authors": [
+        "van Vlaenderen, Koen J."
+      ],
+      "preprint_date": "2003/05/21",
+      "arxiv_version": "v1",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R06.pdf",
+        "bytes": 121409,
+        "sha256": "8b21dc10d2e8c4a1a981b39a7b004426a98c0ac95e6d0f05957685729f053094",
+        "pages": 13,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/physics/0305098v1"
+      }
+    },
+    {
+      "id": "R07",
+      "authors": "Hively, L. M. and Giakos, G. C.",
+      "year": 2012,
+      "title": "Toward a more complete electrodynamic theory",
+      "venue": "International Journal of Signal and Imaging Systems Engineering 5, 3–10",
+      "doi": "10.1504/IJSISE.2012.046745",
+      "arxiv": "",
+      "url": "https://www.ornl.gov/publication/toward-more-complete-electrodynamic-theory",
+      "category": "Scalar and longitudinal EED",
+      "assessment": "Speculative extension",
+      "annotation": "Important source for the scalar/longitudinal-wave terminology used by later EED advocates. Check its proposed source and detector physics separately from the mathematical existence of wave solutions. ORNL hosting establishes provenance, not institutional validation of the proposal.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "download": {
+        "status": "link only; no open PDF selected"
+      }
+    },
+    {
+      "id": "R08",
+      "authors": "Reed, Donald and Hively, Lee M.",
+      "year": 2020,
+      "title": "Implications of Gauge-Free Extended Electrodynamics",
+      "venue": "Symmetry 12, 2110",
+      "doi": "10.3390/sym12122110",
+      "arxiv": "",
+      "url": "https://www.mdpi.com/2073-8994/12/12/2110",
+      "category": "Scalar and longitudinal EED",
+      "assessment": "Speculative synthesis",
+      "annotation": "Central to the repository’s intellectual lineage. Useful as a map of claims and references; statements about experimental confirmation require inspection of the underlying experiments, conventional alternatives, and independent replication.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "pdf_url": "https://www.mdpi.com/2073-8994/12/12/2110/pdf",
+      "download": {
+        "status": "unavailable on this attempt",
+        "reason": "curl: (56) The requested URL returned error: 403"
+      },
+      "crossref": {
+        "title": [
+          "Implications of Gauge-Free Extended Electrodynamics"
+        ],
+        "container-title": [
+          "Symmetry"
+        ],
+        "volume": "12",
+        "issue": "12",
+        "page": "2110",
+        "published": {
+          "date-parts": [
+            [
+              2020,
+              12,
+              18
+            ]
+          ]
+        },
+        "type": "journal-article",
+        "DOI": "10.3390/sym12122110"
+      }
+    },
+    {
+      "id": "R09",
+      "authors": "Arbab, A. I.",
+      "year": 2017,
+      "title": "Extended electrodynamics and its consequences",
+      "venue": "Modern Physics Letters B 31, 1750099",
+      "doi": "10.1142/S0217984917500993",
+      "arxiv": "",
+      "url": "https://doi.org/10.1142/S0217984917500993",
+      "category": "Scalar and longitudinal EED",
+      "assessment": "Speculative theoretical survey",
+      "annotation": "Compares Proca, van Vlaenderen–Waser, and other extensions. The matching title is a 2017 paper, not the 2009 Progress in Physics citation currently printed in FIELD_THEORY.md. Distinct extensions must not share a solver merely because they are called EED.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "download": {
+        "status": "link only; no open PDF selected"
+      },
+      "crossref": {
+        "title": [
+          "Extended electrodynamics and its consequences"
+        ],
+        "container-title": [
+          "Modern Physics Letters B"
+        ],
+        "volume": "31",
+        "issue": "09",
+        "page": "1750099",
+        "published": {
+          "date-parts": [
+            [
+              2017,
+              3,
+              30
+            ]
+          ]
+        },
+        "type": "journal-article",
+        "DOI": "10.1142/s0217984917500993"
+      },
+      "verification_url": "https://www.mdpi.com/2073-8994/15/5/1119"
+    },
+    {
+      "id": "R10",
+      "authors": "Modanese, G.",
+      "year": 2017,
+      "title": "Generalized Maxwell equations and charge conservation censorship",
+      "venue": "Modern Physics Letters B 31, 1750052",
+      "doi": "10.1142/S021798491750052X",
+      "arxiv": "1609.00238",
+      "url": "https://arxiv.org/abs/1609.00238",
+      "category": "Scalar and longitudinal EED",
+      "assessment": "Speculative extension; explicit source structure",
+      "annotation": "Priority reading: derives a secondary current that makes the total source of the antisymmetric field tensor conserved even when the stipulated primary current is not. This is a precise model, not evidence that ordinary laboratory circuits violate charge conservation.",
+      "pdf_url": "https://arxiv.org/pdf/1609.00238v1",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "Generalized Maxwell equations and charge conservation censorship",
+      "verified_authors": [
+        "Modanese, G."
+      ],
+      "preprint_date": "2016/08/29",
+      "arxiv_version": "v1",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R10.pdf",
+        "bytes": 302621,
+        "sha256": "891f4ba591b9570d3d24dcba69e2040cf76dc7bdf9c31cb693351c2f6adbc27f",
+        "pages": 9,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/1609.00238v1"
+      }
+    },
+    {
+      "id": "R11",
+      "authors": "Minotti, F. and Modanese, G.",
+      "year": 2023,
+      "title": "Aharonov–Bohm Electrodynamics in Material Media: A Scalar e.m. Field Cannot Cause Dissipation in a Medium",
+      "venue": "Symmetry 15, 1119",
+      "doi": "10.3390/sym15051119",
+      "arxiv": "",
+      "url": "https://www.mdpi.com/2073-8994/15/5/1119",
+      "category": "Scalar and longitudinal EED",
+      "assessment": "Conditional material model",
+      "annotation": "Read alongside shielding claims. Its constitutive assumptions and field/potential distinctions matter: conclusions for a model dielectric or conductor are not a universal assertion that every proposed longitudinal electric signal passes through a Faraday enclosure.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "pdf_url": "https://www.mdpi.com/2073-8994/15/5/1119/pdf",
+      "download": {
+        "status": "unavailable on this attempt",
+        "reason": "curl: (56) The requested URL returned error: 403"
+      }
+    },
+    {
+      "id": "R12",
+      "authors": "Minotti, F. and Modanese, G.",
+      "year": 2023,
+      "title": "Gauge waves generation and detection in Aharonov-Bohm electrodynamics",
+      "venue": "European Physical Journal C 83, 1086",
+      "doi": "10.1140/epjc/s10052-023-12274-4",
+      "arxiv": "2310.13968",
+      "url": "https://arxiv.org/abs/2310.13968",
+      "category": "Scalar and longitudinal EED",
+      "assessment": "Speculative theory and proposed detector",
+      "annotation": "Discusses fieldless potential waves and detectors with a nonzero extra-current. The detector’s anomalous current is an essential assumption. Do not identify a pure potential wave with a propagating nonconstant C in source-free vacuum.",
+      "pdf_url": "https://arxiv.org/pdf/2310.13968v1",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "Gauge waves generation and detection in Aharonov-Bohm electrodynamics",
+      "verified_authors": [
+        "Minotti, F.",
+        "Modanese, G."
+      ],
+      "preprint_date": "2023/10/21",
+      "arxiv_version": "v1",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R12.pdf",
+        "bytes": 526662,
+        "sha256": "e58515ee236a7ed4eec9365347b54e603f6f45d4f1fefab2625614af8389a979",
+        "pages": 31,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/2310.13968v1"
+      },
+      "crossref": {
+        "title": [
+          "Gauge waves generation and detection in Aharonov–Bohm electrodynamics"
+        ],
+        "container-title": [
+          "The European Physical Journal C"
+        ],
+        "volume": "83",
+        "issue": "11",
+        "article-number": "1086",
+        "published": {
+          "date-parts": [
+            [
+              2023,
+              11,
+              30
+            ]
+          ]
+        },
+        "type": "journal-article",
+        "DOI": "10.1140/epjc/s10052-023-12274-4"
+      }
+    },
+    {
+      "id": "R13",
+      "authors": "Minotti, F. and Modanese, G.",
+      "year": 2024,
+      "title": "Simple circuit and experimental proposal for the detection of gauge-waves",
+      "venue": "Journal of Physics Communications 8, 055003",
+      "doi": "10.1088/2399-6528/ad4e98",
+      "arxiv": "2403.10580",
+      "url": "https://arxiv.org/abs/2403.10580",
+      "category": "Scalar and longitudinal EED",
+      "assessment": "Experimental proposal, not a detection",
+      "annotation": "Useful for specifying an actual observable and circuit. The proposed response relies on material capable of sustaining the assumed nonlocally conserved current; that property needs a microscopic and experimental justification.",
+      "pdf_url": "https://arxiv.org/pdf/2403.10580v1",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "Simple circuit and experimental proposal for the detection of gauge-waves",
+      "verified_authors": [
+        "Minotti, F.",
+        "Modanese, G."
+      ],
+      "preprint_date": "2024/03/15",
+      "arxiv_version": "v1",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R13.pdf",
+        "bytes": 320676,
+        "sha256": "1525b38eeb82882506f09ba106ace7ed4c76f617072ab921f19ccb88be3c2020",
+        "pages": 13,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/2403.10580v1"
+      },
+      "crossref": {
+        "title": [
+          "Simple circuit and experimental proposal for the detection of gauge-waves"
+        ],
+        "container-title": [
+          "Journal of Physics Communications"
+        ],
+        "volume": "8",
+        "issue": "5",
+        "page": "055003",
+        "published": {
+          "date-parts": [
+            [
+              2024,
+              5,
+              1
+            ]
+          ]
+        },
+        "type": "journal-article",
+        "DOI": "10.1088/2399-6528/ad4e98"
+      }
+    },
+    {
+      "id": "R14",
+      "authors": "Beltran Jimenez, Jose and Maroto, Antonio L.",
+      "year": 2011,
+      "title": "On the electromagnetic nature of dark energy and the origin of cosmic magnetic fields",
+      "venue": "arXiv preprint / conference contribution",
+      "doi": "",
+      "arxiv": "1101.2072",
+      "url": "https://arxiv.org/abs/1101.2072",
+      "category": "EED and gravity proposals",
+      "assessment": "Speculative cosmological model",
+      "annotation": "A physical scalar state is proposed in expanding spacetime. The authors distinguish gravitational excitation from excitation by conserved charged currents. A cosmological homogeneous mode is not evidence that a tabletop coil generates the same mode.",
+      "pdf_url": "https://arxiv.org/pdf/1101.2072v1",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "On the electromagnetic nature of dark energy and the origin of cosmic magnetic fields",
+      "verified_authors": [
+        "Jimenez, Jose Beltran",
+        "Maroto, Antonio L."
+      ],
+      "preprint_date": "2011/01/11",
+      "arxiv_version": "v1",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R14.pdf",
+        "bytes": 172895,
+        "sha256": "22f16136e22fffea05b9dc68098bc1c19575abbcca0a4ff526b4c2be65056cc2",
+        "pages": 9,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/1101.2072v1"
+      }
+    },
+    {
+      "id": "R15",
+      "authors": "Minotti, F. and Modanese, G.",
+      "year": 2025,
+      "title": "A new theory of tensor-scalar gravity coupled to Aharonov-Bohm electrodynamics",
+      "venue": "Modern Physics Letters A 40, 2550023",
+      "doi": "10.1142/S0217732325500233",
+      "arxiv": "2408.05230",
+      "url": "https://arxiv.org/abs/2408.05230",
+      "category": "EED and gravity proposals",
+      "assessment": "Speculative action-based model",
+      "annotation": "Closest direct match to this project. Couples AB electrodynamics to gravitational scalars and studies a weak-field limit. Unknown couplings and an anomalous source sector prevent a parameter-free gravity prediction. Re-derive the complete varied action before implementing it.",
+      "pdf_url": "https://arxiv.org/pdf/2408.05230v3",
+      "checked_on": "2026-09-22",
+      "review_depth": "Targeted full-text review of source assumptions, governing equations or conclusions; no complete independent derivation/replication",
+      "verified_title": "A new theory of tensor-scalar gravity coupled to Aharonov-Bohm electrodynamics",
+      "verified_authors": [
+        "Minotti, F.",
+        "Modanese, G."
+      ],
+      "preprint_date": "2024/08/01",
+      "arxiv_version": "v3",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R15.pdf",
+        "bytes": 333563,
+        "sha256": "06206a4072829aa1f2b04736648c7359fd858d05bf0c868ffa74b567eee7456f",
+        "pages": 23,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/2408.05230v3"
+      },
+      "crossref": {
+        "title": [
+          "A new theory of tensor-scalar gravity coupled to Aharonov—Bohm electrodynamics"
+        ],
+        "container-title": [
+          "Modern Physics Letters A"
+        ],
+        "volume": "40",
+        "issue": "09n10",
+        "article-number": "2550023",
+        "published": {
+          "date-parts": [
+            [
+              2025,
+              3,
+              19
+            ]
+          ]
+        },
+        "type": "journal-article",
+        "DOI": "10.1142/s0217732325500233"
+      }
+    },
+    {
+      "id": "R16",
+      "authors": "Pullano, Rosario and Minotti, Fernando and Modanese, Giovanni",
+      "year": 2026,
+      "title": "One-Dimensional Solitary-Wave Solutions in Scalar–Tensor Gravity Coupled to Aharonov–Bohm Electrodynamics",
+      "venue": "Mathematics 14, 1517",
+      "doi": "10.3390/math14091517",
+      "arxiv": "",
+      "url": "https://www.mdpi.com/2227-7390/14/9/1517",
+      "category": "EED and gravity proposals",
+      "assessment": "Speculative mathematical follow-up",
+      "annotation": "Published 30 April 2026. Gives traveling-wave reductions in the preceding model. Potentially useful as a numerical reproduction target; an exact reduced solution does not establish stability in the full system, realizable sources, or experimental existence.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "pdf_url": "https://www.mdpi.com/2227-7390/14/9/1517/pdf",
+      "download": {
+        "status": "unavailable on this attempt",
+        "reason": "curl: (56) The requested URL returned error: 403"
+      },
+      "crossref": {
+        "title": [
+          "One-Dimensional Solitary-Wave Solutions in Scalar–Tensor Gravity Coupled to Aharonov–Bohm Electrodynamics"
+        ],
+        "container-title": [
+          "Mathematics"
+        ],
+        "volume": "14",
+        "issue": "9",
+        "page": "1517",
+        "published": {
+          "date-parts": [
+            [
+              2026,
+              4,
+              30
+            ]
+          ]
+        },
+        "type": "journal-article",
+        "DOI": "10.3390/math14091517"
+      }
+    },
+    {
+      "id": "R17",
+      "authors": "Iadicicco, A. and Modanese, G. and Verolino, L.",
+      "year": 2026,
+      "title": "Effective observer-split source terms in rotating frames and gravitomagnetic backgrounds in extended Aharonov-Bohm electrodynamics",
+      "venue": "General Relativity and Gravitation 58, 106",
+      "doi": "10.1007/s10714-026-03606-2",
+      "arxiv": "",
+      "url": "https://link.springer.com/article/10.1007/s10714-026-03606-2",
+      "category": "EED and gravity proposals",
+      "assessment": "Recent theoretical analysis",
+      "annotation": "Published 10 September 2026. Especially relevant to rotating-source claims: a nonzero transport term after an observer split is not a nonzero covariant four-divergence of the physical current. Audit that distinction before inserting an apparent source into the AB scalar equation.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Targeted full-text review of source assumptions, governing equations or conclusions; no complete independent derivation/replication",
+      "pdf_url": "https://link.springer.com/content/pdf/10.1007/s10714-026-03606-2.pdf",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R17.pdf",
+        "bytes": 643314,
+        "sha256": "5f5b80215e4bea664b51a90c51015c14037cdf41176a7f6500816f70ef9f6767",
+        "pages": 20,
+        "retrieved_on": "2026-09-22",
+        "url": "https://link.springer.com/content/pdf/10.1007/s10714-026-03606-2.pdf"
+      }
+    },
+    {
+      "id": "R18",
+      "authors": "Wilhelm, Paul",
+      "year": 2026,
+      "title": "The Deleted Degrees of Freedom: A Case for Potential-Primary Electrodynamics",
+      "venue": "Advanced Rediscovery; author-published paper",
+      "doi": "",
+      "arxiv": "",
+      "url": "https://advanced-rediscovery.com/research/deleted-degrees-of-freedom",
+      "category": "Repository lineage and corrections",
+      "assessment": "Author-published speculative synthesis",
+      "annotation": "The user confirms Deleted Degrees of Freedom as the motivating title. This is the located Paul Wilhelm edition, dated 19 March 2026; the exact original reading copy has not been compared. Preserve it as provenance and a claim index, not experimental verification, and read its errata first.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "pdf_url": "https://advanced-rediscovery.com/papers/deleted-degrees-of-freedom/paper.pdf",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R18.pdf",
+        "bytes": 4363177,
+        "sha256": "54cec86e62bd38cd8cd9ea28700b505e08960532f4eaac7ffd3104937bd5ff60",
+        "pages": 46,
+        "retrieved_on": "2026-09-22",
+        "url": "https://advanced-rediscovery.com/papers/deleted-degrees-of-freedom/paper.pdf"
+      }
+    },
+    {
+      "id": "R19",
+      "authors": "Wilhelm, Paul",
+      "year": 2026,
+      "title": "Errata: The Deleted Degrees of Freedom: A Case for Potential-Primary Electrodynamics",
+      "venue": "Advanced Rediscovery; author-published errata",
+      "doi": "",
+      "arxiv": "",
+      "url": "https://advanced-rediscovery.com/research/deleted-degrees-of-freedom-errata",
+      "category": "Repository lineage and corrections",
+      "assessment": "Corrections to R18",
+      "annotation": "Dated 9 August 2026. E-001, E-023, and E-024 withdraw or narrow shielding, fieldless scalar-wave, and source-generation claims. The stated source condition is directly relevant to Oracle’s missing charge source. An erratum correcting some claims does not validate the remaining thesis.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Targeted full-text review of source assumptions, governing equations or conclusions; no complete independent derivation/replication",
+      "pdf_url": "https://advanced-rediscovery.com/papers/deleted-degrees-of-freedom-errata/paper.pdf",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R19.pdf",
+        "bytes": 237294,
+        "sha256": "9f54563902e2a45b421a6014cee907f3f549125631b5584f7025cd86681e654c",
+        "pages": 25,
+        "retrieved_on": "2026-09-22",
+        "url": "https://advanced-rediscovery.com/papers/deleted-degrees-of-freedom-errata/paper.pdf"
+      }
+    },
+    {
+      "id": "R20",
+      "authors": "Wheeler, John Archibald",
+      "year": 1955,
+      "title": "Geons",
+      "venue": "Physical Review 97, 511–536",
+      "doi": "10.1103/PhysRev.97.511",
+      "arxiv": "",
+      "url": "https://journals.aps.org/pr/abstract/10.1103/PhysRev.97.511",
+      "category": "Established EM–gravity coupling",
+      "assessment": "Theoretical solutions within general relativity",
+      "annotation": "A concrete historical study of electromagnetic energy gravitating strongly enough to help confine itself. Useful for understanding genuine nonlinear EM–gravity interaction; it does not provide evidence for controllable laboratory antigravity.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "download": {
+        "status": "link only; no open PDF selected"
+      }
+    },
+    {
+      "id": "R21",
+      "authors": "Gertsenshtein, M. E.",
+      "year": 1962,
+      "title": "Wave Resonance of Light and Gravitational Waves",
+      "venue": "Soviet Physics JETP 14, 84–85",
+      "doi": "",
+      "arxiv": "",
+      "url": "https://jetp.ras.ru/cgi-bin/e/index/e/14/1/p84?a=list",
+      "category": "Established EM–gravity coupling",
+      "assessment": "Prediction of Einstein–Maxwell theory",
+      "annotation": "Foundational calculation of conversion between electromagnetic and gravitational waves in an external field. English translation 1962; Russian original 1961. This is a real theoretical coupling mechanism, not a claim of laboratory detection or useful conversion efficiency.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "pdf_url": "https://jetp.ras.ru/cgi-bin/dn/e_014_01_0084.pdf",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R21.pdf",
+        "bytes": 180522,
+        "sha256": "308f243c727df048f580426f7a90f460a5b93f45786b435461338c20ab02de20",
+        "pages": 2,
+        "retrieved_on": "2026-09-22",
+        "url": "https://jetp.ras.ru/cgi-bin/dn/e_014_01_0084.pdf"
+      }
+    },
+    {
+      "id": "R22",
+      "authors": "Mashhoon, Bahram",
+      "year": 2007,
+      "title": "Gravitoelectromagnetism: A Brief Review",
+      "venue": "The Measurement of Gravitomagnetism: A Challenging Enterprise, pp. 29–39",
+      "doi": "",
+      "arxiv": "gr-qc/0311030",
+      "url": "https://arxiv.org/abs/gr-qc/0311030",
+      "category": "Established EM–gravity coupling",
+      "assessment": "Weak-field GR formalism",
+      "annotation": "Read before interpreting the GEM module. Gravitoelectric and gravitomagnetic fields describe weak gravity sourced by stress-energy and mass currents; similar-looking equations do not make these fields identical to electromagnetic E and B. Preprint 2003, chapter 2007, revision 2008.",
+      "pdf_url": "https://arxiv.org/pdf/gr-qc/0311030v2",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "Gravitoelectromagnetism: A Brief Review",
+      "verified_authors": [
+        "Mashhoon, Bahram"
+      ],
+      "preprint_date": "2003/11/08",
+      "arxiv_version": "v2",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R22.pdf",
+        "bytes": 167707,
+        "sha256": "e998e1a144551da7c2df2e5868371b394938ecce0df6005664c85011cea3613d",
+        "pages": 15,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/gr-qc/0311030v2"
+      }
+    },
+    {
+      "id": "R23",
+      "authors": "Domcke, Valerie and Garcia-Cely, Camilo",
+      "year": 2021,
+      "title": "Potential of radio telescopes as high-frequency gravitational wave detectors",
+      "venue": "Physical Review Letters 126, 021104",
+      "doi": "10.1103/PhysRevLett.126.021104",
+      "arxiv": "2006.01161",
+      "url": "https://arxiv.org/abs/2006.01161",
+      "category": "Established EM–gravity coupling",
+      "assessment": "Standard-theory conversion; observational proposal/limits",
+      "annotation": "Modern treatment of photon–graviton conversion and radio observations. Supplies realistic scale and propagation considerations. The bounds depend on assumptions about cosmic magnetic fields; they are not a detection of conversion.",
+      "pdf_url": "https://arxiv.org/pdf/2006.01161v3",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "Potential of radio telescopes as high-frequency gravitational wave detectors",
+      "verified_authors": [
+        "Domcke, Valerie",
+        "Garcia-Cely, Camilo"
+      ],
+      "preprint_date": "2020/06/01",
+      "arxiv_version": "v3",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R23.pdf",
+        "bytes": 925708,
+        "sha256": "975dd5ea4f4246e48d3cadf38208694a4abb7782b6e4640a967dd02e126b2918",
+        "pages": 12,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/2006.01161v3"
+      }
+    },
+    {
+      "id": "R24",
+      "authors": "Domcke, Valerie and Garcia-Cely, Camilo and Lee, Sung Mook",
+      "year": 2025,
+      "title": "Gravitational Wave Scattering on Magnetic Fields",
+      "venue": "arXiv preprint",
+      "doi": "",
+      "arxiv": "2507.16609",
+      "url": "https://arxiv.org/abs/2507.16609",
+      "category": "Established EM–gravity coupling",
+      "assessment": "Recent calculation within standard coupling",
+      "annotation": "Develops angular and polarization structure for inverse Gertsenshtein scattering, including nonuniform magnetic fields. A strong target for eventual geometry-based simulation. Publication status here follows the retrieved arXiv record, which lists no journal reference.",
+      "pdf_url": "https://arxiv.org/pdf/2507.16609v1",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "Gravitational Wave Scattering on Magnetic Fields",
+      "verified_authors": [
+        "Domcke, Valerie",
+        "Garcia-Cely, Camilo",
+        "Lee, Sung Mook"
+      ],
+      "preprint_date": "2025/07/22",
+      "arxiv_version": "v1",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R24.pdf",
+        "bytes": 3604432,
+        "sha256": "5f76070fd78ed54da952bb3153ef5ae6b6cfcd9ee14d0ec9ad5c59214ace3a2e",
+        "pages": 47,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/2507.16609v1"
+      }
+    },
+    {
+      "id": "R25",
+      "authors": "Overduin, J. M. and Wesson, P. S.",
+      "year": 1997,
+      "title": "Kaluza-Klein Gravity",
+      "venue": "Physics Reports 283, 303–380",
+      "doi": "10.1016/S0370-1573(96)00046-4",
+      "arxiv": "gr-qc/9805018",
+      "url": "https://arxiv.org/abs/gr-qc/9805018",
+      "category": "Geometric and quantum connections",
+      "assessment": "Unconfirmed higher-dimensional unification framework",
+      "annotation": "Explains how a higher-dimensional metric decomposes into a four-dimensional metric, vector, and scalar. It does not imply that the four-dimensional Newtonian potential equals a constant times the electromagnetic four-divergence. Journal 1997; arXiv deposit 1998.",
+      "pdf_url": "https://arxiv.org/pdf/gr-qc/9805018v1",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "Kaluza-Klein Gravity",
+      "verified_authors": [
+        "Overduin, J. M.",
+        "Wesson, P. S."
+      ],
+      "preprint_date": "1998/05/07",
+      "arxiv_version": "v1",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R25.pdf",
+        "bytes": 680585,
+        "sha256": "f6aac66457fc1acd595fe857511508d01fc2be60f1bcda22d8d7f91b2fe62d3b",
+        "pages": 102,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/gr-qc/9805018v1"
+      }
+    },
+    {
+      "id": "R26",
+      "authors": "Monteiro, Ricardo and O'Connell, Donal and White, Chris D.",
+      "year": 2014,
+      "title": "Black holes and the double copy",
+      "venue": "Journal of High Energy Physics 2014, 056",
+      "doi": "10.1007/JHEP12(2014)056",
+      "arxiv": "1410.0239",
+      "url": "https://arxiv.org/abs/1410.0239",
+      "category": "Geometric and quantum connections",
+      "assessment": "Mathematical relation between theories",
+      "annotation": "A concrete gauge/gravity correspondence for classes of classical solutions. Excellent for analytic cross-checks. Mapping a Coulomb-like solution to a black-hole metric is not a physical device converting a given electromagnetic source into that black hole.",
+      "pdf_url": "https://arxiv.org/pdf/1410.0239v2",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "Black holes and the double copy",
+      "verified_authors": [
+        "Monteiro, Ricardo",
+        "O'Connell, Donal",
+        "White, Chris D."
+      ],
+      "preprint_date": "2014/10/01",
+      "arxiv_version": "v2",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R26.pdf",
+        "bytes": 253949,
+        "sha256": "51bef28fef3c5295b9a7874c1fa2ad225085fdc2ebe6111d81e962c50eb27878",
+        "pages": 22,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/1410.0239v2"
+      }
+    },
+    {
+      "id": "R27",
+      "authors": "Bern, Zvi and Carrasco, John Joseph and Chiodaroli, Marco and Johansson, Henrik and Roiban, Radu",
+      "year": 2024,
+      "title": "The Duality Between Color and Kinematics and its Applications",
+      "venue": "Journal of Physics A: Mathematical and Theoretical 57, 333002",
+      "doi": "10.1088/1751-8121/ad5fd0",
+      "arxiv": "1909.01358",
+      "url": "https://arxiv.org/abs/1909.01358",
+      "category": "Geometric and quantum connections",
+      "assessment": "Technical review of gauge/gravity relations",
+      "annotation": "Broad, advanced guide to double-copy structure, primarily in non-Abelian gauge theory and gravitational amplitudes. Clarifies both the reach and limitations of the connection. First preprint 2019; published review 2024.",
+      "pdf_url": "https://arxiv.org/pdf/1909.01358v1",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "The Duality Between Color and Kinematics and its Applications",
+      "verified_authors": [
+        "Bern, Zvi",
+        "Carrasco, John Joseph",
+        "Chiodaroli, Marco",
+        "Johansson, Henrik",
+        "Roiban, Radu"
+      ],
+      "preprint_date": "2019/09/03",
+      "arxiv_version": "v1",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R27.pdf",
+        "bytes": 3247830,
+        "sha256": "422235466b94cd3e8cc2495628f556ebaadeeb261867bc203ea8a352db3ef72a",
+        "pages": 208,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/1909.01358v1"
+      }
+    },
+    {
+      "id": "R28",
+      "authors": "Arkani-Hamed, Nima and Motl, Lubos and Nicolis, Alberto and Vafa, Cumrun",
+      "year": 2007,
+      "title": "The String Landscape, Black Holes and Gravity as the Weakest Force",
+      "venue": "Journal of High Energy Physics 2007, 060",
+      "doi": "10.1088/1126-6708/2007/06/060",
+      "arxiv": "hep-th/0601001",
+      "url": "https://arxiv.org/abs/hep-th/0601001",
+      "category": "Geometric and quantum connections",
+      "assessment": "Quantum-gravity conjecture",
+      "annotation": "The weak gravity conjecture relates charge, mass, gauge coupling, and gravitational consistency. It is a useful lead on why electromagnetic and gravitational strengths might be related, but is neither an experimental unification nor a low-energy coil-force law.",
+      "pdf_url": "https://arxiv.org/pdf/hep-th/0601001v2",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "The String Landscape, Black Holes and Gravity as the Weakest Force",
+      "verified_authors": [
+        "Arkani-Hamed, Nima",
+        "Motl, Lubos",
+        "Nicolis, Alberto",
+        "Vafa, Cumrun"
+      ],
+      "preprint_date": "2006/01/02",
+      "arxiv_version": "v2",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R28.pdf",
+        "bytes": 218890,
+        "sha256": "b76dc07e0a021855cac69db0df8b6d836c1ba678929680374c08b8ef4e3943c4",
+        "pages": 21,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/hep-th/0601001v2"
+      }
+    },
+    {
+      "id": "R29",
+      "authors": "Born, Max and Infeld, Leopold",
+      "year": 1934,
+      "title": "Foundations of the New Field Theory",
+      "venue": "Proceedings of the Royal Society A 144, 425–451",
+      "doi": "10.1098/rspa.1934.0059",
+      "arxiv": "",
+      "url": "https://www.jstor.org/stable/2935568",
+      "category": "Other extensions and effective theories",
+      "assessment": "Nonlinear electrodynamics model",
+      "annotation": "A historically important nonlinear extension addressing point-charge field behavior. Distinguish nonlinear functions of electromagnetic invariants from the AB scalar-divergence extension. Coupling Born–Infeld theory to gravity is an additional, explicit construction.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "download": {
+        "status": "link only; no open PDF selected"
+      }
+    },
+    {
+      "id": "R30",
+      "authors": "Heisenberg, W. and Euler, H.",
+      "year": 1936,
+      "title": "Consequences of Dirac Theory of the Positron",
+      "venue": "Zeitschrift fuer Physik 98, 714–732",
+      "doi": "",
+      "arxiv": "physics/0605038",
+      "url": "https://arxiv.org/abs/physics/0605038",
+      "category": "Other extensions and effective theories",
+      "assessment": "Established QED effective-theory foundation",
+      "annotation": "Shows why classical Maxwell equations acquire nonlinear quantum corrections. The linked file is the 2006 English translation of the 1936 paper. Provides a standard-physics comparator for claims that nonlinear electromagnetic behavior necessarily indicates a new gravitational interaction.",
+      "pdf_url": "https://arxiv.org/pdf/physics/0605038v1",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "Consequences of Dirac Theory of the Positron",
+      "verified_authors": [
+        "Heisenberg, W.",
+        "Euler, H."
+      ],
+      "preprint_date": "2006/05/04",
+      "arxiv_version": "v1",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R30.pdf",
+        "bytes": 1083800,
+        "sha256": "73e199e546a697acaee2a5025aa0e1aa0e4ad853f1917e54e2653d8924c1524e",
+        "pages": 27,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/physics/0605038v1"
+      }
+    },
+    {
+      "id": "R31",
+      "authors": "Drummond, I. T. and Hathrell, S. J.",
+      "year": 1980,
+      "title": "QED vacuum polarization in a background gravitational field and its effect on the velocity of photons",
+      "venue": "Physical Review D 22, 343",
+      "doi": "10.1103/PhysRevD.22.343",
+      "arxiv": "",
+      "url": "https://journals.aps.org/prd/abstract/10.1103/PhysRevD.22.343",
+      "category": "Other extensions and effective theories",
+      "assessment": "QED in curved spacetime; effective approximation",
+      "annotation": "Derives curvature-dependent electromagnetic terms from QED. Useful for studying actual operators coupling curvature and electromagnetism. Low-energy propagation speeds must not be identified automatically with high-frequency signal/front velocities or an operational causality violation.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "download": {
+        "status": "link only; no open PDF selected"
+      }
+    },
+    {
+      "id": "R32",
+      "authors": "Will, Clifford M.",
+      "year": 2014,
+      "title": "The Confrontation between General Relativity and Experiment",
+      "venue": "Living Reviews in Relativity 17, 4",
+      "doi": "10.12942/lrr-2014-4",
+      "arxiv": "1403.7377",
+      "url": "https://arxiv.org/abs/1403.7377",
+      "category": "Experimental constraints and controls",
+      "assessment": "Review of tested gravitational physics",
+      "annotation": "Reference for equivalence-principle and post-Newtonian requirements on any proposed coupling. Use as a framework, not as a table of the latest limits: the numerical experimental situation has advanced since 2014.",
+      "pdf_url": "https://arxiv.org/pdf/1403.7377v1",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "The Confrontation between General Relativity and Experiment",
+      "verified_authors": [
+        "Will, Clifford M."
+      ],
+      "preprint_date": "2014/03/28",
+      "arxiv_version": "v1",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R32.pdf",
+        "bytes": 1654045,
+        "sha256": "87b6db17dcc30642af2ed719c010468e006b68736e4423a07891a1e518ddaacf",
+        "pages": 113,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/1403.7377v1"
+      }
+    },
+    {
+      "id": "R33",
+      "authors": "Touboul, Pierre and others",
+      "year": 2022,
+      "title": "MICROSCOPE mission: final results of the test of the Equivalence Principle",
+      "venue": "Physical Review Letters 129, 121102",
+      "doi": "10.1103/PhysRevLett.129.121102",
+      "arxiv": "2209.15487",
+      "url": "https://arxiv.org/abs/2209.15487",
+      "category": "Experimental constraints and controls",
+      "assessment": "Precision null experiment",
+      "annotation": "Constrains composition-dependent free fall of titanium and platinum test bodies. A proposed electromagnetic contribution to gravity must be checked against the appropriate predicted differential acceleration. This is not a universal upper limit on every possible EM–gravity coupling.",
+      "pdf_url": "https://arxiv.org/pdf/2209.15487v1",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "MICROSCOPE mission: final results of the test of the Equivalence Principle",
+      "verified_authors": [
+        "Touboul, Pierre",
+        "Métris, Gilles",
+        "Rodrigues, Manuel",
+        "Bergé, Joel",
+        "Robert, Alain",
+        "Baghi, Quentin",
+        "André, Yves",
+        "Bedouet, Judicaël",
+        "Boulanger, Damien",
+        "Bremer, Stefanie",
+        "Carle, Patrice",
+        "Chhun, Ratana",
+        "Christophe, Bruno",
+        "Cipolla, Valerio",
+        "Damour, Thibault",
+        "Danto, Pascale",
+        "Demange, Louis",
+        "Dittus, Hansjoerg",
+        "Dhuicque, Océane",
+        "Fayet, Pierre",
+        "Foulon, Bernard",
+        "Guidotti, Pierre-Yves",
+        "Hagedorn, Daniel",
+        "Hardy, Emilie",
+        "Huynh, Phuong-Anh",
+        "Kayser, Patrick",
+        "Lala, Stéphanie",
+        "Lämmerzahl, Claus",
+        "Lebat, Vincent",
+        "Liorzou, Françoise",
+        "List, Meike",
+        "Löffler, Frank",
+        "Panet, Isabelle",
+        "Pernot-Borràs, Martin",
+        "Perraud, Laurent",
+        "Pires, Sandrine",
+        "Pouilloux, Benjamin",
+        "Prieur, Pascal",
+        "Rebray, Alexandre",
+        "Reynaud, Serge",
+        "Rievers, Benny",
+        "Selig, Hanns",
+        "Serron, Laura",
+        "Sumner, Timothy",
+        "Tanguy, Nicolas",
+        "Torresi, Patrizia",
+        "Visser, Pieter"
+      ],
+      "preprint_date": "2022/09/30",
+      "arxiv_version": "v1",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R33.pdf",
+        "bytes": 460403,
+        "sha256": "790aeec17229c93bd63618ae790a37d4452e7b0b4ea1c9f4e41128b0a88f78ef",
+        "pages": 9,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/2209.15487v1"
+      }
+    },
+    {
+      "id": "R34",
+      "authors": "Agostini, M. and others",
+      "year": 2015,
+      "title": "A test of electric charge conservation with Borexino",
+      "venue": "Physical Review Letters 115, 231802",
+      "doi": "10.1103/PhysRevLett.115.231802",
+      "arxiv": "1509.01223",
+      "url": "https://arxiv.org/abs/1509.01223",
+      "category": "Experimental constraints and controls",
+      "assessment": "Channel-specific null experiment",
+      "annotation": "Bounds electron decay into a neutrino and photon: lifetime greater than 6.6 × 10^28 years at 90% confidence. It constrains that channel, not automatically every proposed nonlocal transport anomaly. A material-specific nonconservation claim needs its own quantitative test.",
+      "pdf_url": "https://arxiv.org/pdf/1509.01223v2",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "A test of electric charge conservation with Borexino",
+      "verified_authors": [
+        "Borexino Collaboration",
+        "Agostini, M.",
+        "Appel, S.",
+        "Bellini, G.",
+        "Benziger, J.",
+        "Bick, D.",
+        "Bonfini, G.",
+        "Bravo, D.",
+        "Caccianiga, B.",
+        "Calaprice, F.",
+        "Caminata, A.",
+        "Cavalcante, P.",
+        "Chepurnov, A.",
+        "D'Angelo, D.",
+        "Davini, S.",
+        "Derbin, A.",
+        "Di Noto, L.",
+        "Drachnev, I.",
+        "Empl, A.",
+        "Etenko, A.",
+        "Fomenko, K.",
+        "Franco, D.",
+        "Gabriele, F.",
+        "Galbiati, C.",
+        "Ghiano, C.",
+        "Giammarchi, M.",
+        "Goeger-Neff, M.",
+        "Goretti, A.",
+        "Gromov, M.",
+        "Hagner, C.",
+        "Hungerford, E.",
+        "Ianni, Aldo",
+        "Ianni, Andrea",
+        "Jedrzejczak, K.",
+        "Kaiser, M.",
+        "Kobychev, V.",
+        "Korablev, D.",
+        "Korga, G.",
+        "Kryn, D.",
+        "Laubenstein, M.",
+        "Lehnert, B.",
+        "Litvinovich, E.",
+        "Lombardi, F.",
+        "Lombardi, P.",
+        "Ludhova, L.",
+        "Lukyanchenko, G.",
+        "Machulin, I.",
+        "Manecki, S.",
+        "Maneschg, W.",
+        "Marcocci, S.",
+        "Meroni, E.",
+        "Meyer, M.",
+        "Miramonti, L.",
+        "Misiaszek, M.",
+        "Montuschi, M.",
+        "Mosteiro, P.",
+        "Muratova, V.",
+        "Neumair, B.",
+        "Oberauer, L.",
+        "Obolensky, M.",
+        "Ortica, F.",
+        "Otis, K.",
+        "Pallavicini, M.",
+        "Papp, L.",
+        "Perasso, L.",
+        "Pocar, A.",
+        "Ranucci, G.",
+        "Razeto, A.",
+        "Re, A.",
+        "Romani, A.",
+        "Roncin, R.",
+        "Rossi, N.",
+        "Schoenert, S.",
+        "Semenov, D.",
+        "Simgen, H.",
+        "Skorokhvatov, M.",
+        "Smirnov, O.",
+        "Sotnikov, A.",
+        "Sukhotin, S.",
+        "Suvorov, Y.",
+        "Tartaglia, R.",
+        "Testera, G.",
+        "Thurn, J.",
+        "Toropova, M.",
+        "Unzhakov, E.",
+        "Vishneva, A.",
+        "Vogelaar, R. B.",
+        "von Feilitzsch, F.",
+        "Wang, H.",
+        "Weinz, S.",
+        "Winter, J.",
+        "Wojcik, M.",
+        "Wurm, M.",
+        "Yokley, Z.",
+        "Zaimidoroga, O.",
+        "Zavatarelli, S.",
+        "Zuber, K.",
+        "Zuzel, G."
+      ],
+      "preprint_date": "2015/09/03",
+      "arxiv_version": "v2",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R34.pdf",
+        "bytes": 152116,
+        "sha256": "da314018af5500e4e8792c6dab3c9a9035d34e035eeb8ba61e86c22e6dd3ff20",
+        "pages": 5,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/1509.01223v2"
+      }
+    },
+    {
+      "id": "R35",
+      "authors": "Goldhaber, Alfred Scharff and Nieto, Michael Martin",
+      "year": 2010,
+      "title": "Photon and Graviton Mass Limits",
+      "venue": "Reviews of Modern Physics 82, 939–979",
+      "doi": "10.1103/RevModPhys.82.939",
+      "arxiv": "0809.1003",
+      "url": "https://arxiv.org/abs/0809.1003",
+      "category": "Experimental constraints and controls",
+      "assessment": "Review of model-dependent constraints",
+      "annotation": "Useful for Proca and extra-polarization branches, especially distinctions between robust and assumption-dependent bounds. This is a historical review, not a claim that its numerical limits remain the strongest in 2026.",
+      "pdf_url": "https://arxiv.org/pdf/0809.1003v5",
+      "checked_on": "2026-09-22",
+      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "verified_title": "Photon and Graviton Mass Limits",
+      "verified_authors": [
+        "Goldhaber, Alfred Scharff",
+        "Nieto, Michael Martin"
+      ],
+      "preprint_date": "2008/09/05",
+      "arxiv_version": "v5",
+      "metadata_status": "verified from arXiv meta tags",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R35.pdf",
+        "bytes": 762957,
+        "sha256": "f2d3dd242780ccaed5fc5bfab2539cc7acda7af5b02768bd2497cdf04956b40a",
+        "pages": 42,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/0809.1003v5"
+      }
+    },
+    {
+      "id": "R36",
+      "authors": "Canning, Francis X. and Melcher, Cory and Winet, Edwin",
+      "year": 2004,
+      "title": "Asymmetrical Capacitors for Propulsion",
+      "venue": "NASA/CR-2004-213312",
+      "doi": "",
+      "arxiv": "",
+      "url": "https://ntrs.nasa.gov/search.jsp?R=20040171929",
+      "category": "Experimental constraints and controls",
+      "assessment": "Conventional explanation of tested devices",
+      "annotation": "Control literature for gas-mediated capacitor thrust: the measured forces were consistent with ion transport and collisions transferring momentum to air. This is not a direct test of the user’s specified static solid-dielectric claim. For that question prioritize R38, R42, and R43.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Targeted full-text review of source assumptions, governing equations or conclusions; no complete independent derivation/replication",
+      "pdf_url": "https://ntrs.nasa.gov/api/citations/20040171929/downloads/20040171929.pdf",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R36.pdf",
+        "bytes": 1017305,
+        "sha256": "19f46f25e687774b85a5195b1ef18750bae5075917532a3e80f6c62b6c6544e9",
+        "pages": 23,
+        "retrieved_on": "2026-09-22",
+        "url": "https://ntrs.nasa.gov/api/citations/20040171929/downloads/20040171929.pdf"
+      }
+    },
+    {
+      "id": "R37",
+      "authors": "Brown, Thomas Townsend",
+      "year": 1928,
+      "title": "A method of and an apparatus or machine for producing force or motion",
+      "venue": "British patent GB300311A",
+      "doi": "",
+      "arxiv": "",
+      "url": "https://patents.google.com/patent/GB300311A/en",
+      "category": "Brown and static solid dielectrics",
+      "assessment": "Original historical claim; patent, not validation",
+      "annotation": "The patent describes rigidly linked conductors and alternating insulating slabs and plates. Useful for defining Brown’s solid-dielectric claim in his own terms. Its assertion of gravitational force is a claim to test, not an experimental finding established by patent publication.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Patent record and abstract; no independent experimental verification",
+      "download": {
+        "status": "link only; no open PDF selected"
+      }
+    },
+    {
+      "id": "R38",
+      "authors": "Talley, Robert L.",
+      "year": 1991,
+      "title": "Twenty First Century Propulsion Concept",
+      "venue": "Phillips Laboratory report PL-TR-91-3009; DTIC ADA237853",
+      "doi": "",
+      "arxiv": "",
+      "url": "https://apps.dtic.mil/sti/tr/pdf/ADA237853.pdf",
+      "category": "Brown and static solid dielectrics",
+      "assessment": "Experimental null for steady operation; separate breakdown anomalies",
+      "annotation": "Public-release report with high-vacuum capacitor tests, limited to about 19 kV by breakdown. Reports no detected propulsion under steady, non-breakdown conditions; limited ceramic breakdown observations are a separate transient claim. Chamber-wall electrostatic interactions were significant.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Targeted full-text review of apparatus, source assumptions or conclusions; no independent replication",
+      "pdf_url": "https://robertfrancisjr.com/pdfs/Twenty%20First%20Century%20Propulsion%20Concept.pdf",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R38.pdf",
+        "bytes": 4255162,
+        "sha256": "5c1c8bb9aeefdcb43934427d70edbb822cc6db368cb52021be0c40a4e58f2f1a",
+        "pages": 102,
+        "retrieved_on": "2026-09-22",
+        "url": "https://robertfrancisjr.com/pdfs/Twenty%20First%20Century%20Propulsion%20Concept.pdf"
+      },
+      "access_note": "Official DTIC retrieval returned HTTP 403. Local copy is the public-release report scan hosted by robertfrancisjr.com; title/report number and release statement checked on its front matter."
+    },
+    {
+      "id": "R39",
+      "authors": "Buehler, Doyle R.",
+      "year": 2004,
+      "title": "Exploratory Research on the Phenomenon of the Movement of High Voltage Capacitors",
+      "venue": "Journal of Space Mixing 2, 1–22",
+      "doi": "",
+      "arxiv": "",
+      "url": "https://www.space-mixing-theory.com/abstract2.htm",
+      "category": "Brown and static solid dielectrics",
+      "assessment": "Positive exploratory report; mechanism unresolved",
+      "annotation": "Reports apparent upward forces in charged capacitor experiments. Includes air and wax dielectrics, and extrapolates possible vacuum operation rather than demonstrating it. Preserve the positive claim, but do not label it an established vacuum solid-dielectric effect or infer gravity from a balance reading.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Targeted full-text review of apparatus, source assumptions or conclusions; no independent replication",
+      "pdf_url": "https://www.space-mixing-theory.com/article2.pdf",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R39.pdf",
+        "bytes": 356030,
+        "sha256": "071e6fded0a105add8400f51c353ec16fe2e2a6a573f4806546d7f45be501dc7",
+        "pages": 22,
+        "retrieved_on": "2026-09-22",
+        "url": "https://www.space-mixing-theory.com/article2.pdf"
+      }
+    },
+    {
+      "id": "R40",
+      "authors": "Ivanov, Boyko V.",
+      "year": 2005,
+      "title": "On the gravitational field induced by static electromagnetic sources",
+      "venue": "arXiv preprint",
+      "doi": "",
+      "arxiv": "gr-qc/0502047",
+      "url": "https://arxiv.org/abs/gr-qc/0502047",
+      "category": "Brown and static solid dielectrics",
+      "assessment": "Proposed laboratory interpretation of exact GR solutions",
+      "annotation": "Argues for strong acceleration terms in Weyl–Majumdar–Papapetrou solutions sourced by static electromagnetic configurations. Audit material mass, surface sources, boundary matching and supports before interpreting a term linear in field as laboratory propulsion. Compare the specific predictions with R42–R43.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Targeted full-text review of apparatus, source assumptions or conclusions; no independent replication",
+      "pdf_url": "https://arxiv.org/pdf/gr-qc/0502047v1",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R40.pdf",
+        "bytes": 297040,
+        "sha256": "d8b0f497fa297822af1615cdf68e2108ce69ef47d90e1cf104f8c587ce6be729",
+        "pages": 18,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/gr-qc/0502047v1"
+      },
+      "arxiv_version": "v1",
+      "preprint_date": "2005-02-10"
+    },
+    {
+      "id": "R41",
+      "authors": "Schreiber, T. and Tajmar, M.",
+      "year": 2016,
+      "title": "Testing the Possibility of Weight Changes in Highly-Polarized Electrets",
+      "venue": "52nd AIAA/SAE/ASEE Joint Propulsion Conference, AIAA 2016-4919",
+      "doi": "10.2514/6.2016-4919",
+      "arxiv": "",
+      "url": "https://doi.org/10.2514/6.2016-4919",
+      "category": "Brown and static solid dielectrics",
+      "assessment": "Related polarization experiment; no confirmed weight effect",
+      "annotation": "Polarized and control wax electrets showed similar weight drift; improved sealing reduced artifacts. This is a useful static-polarization control, but its carnauba/rosin/beeswax mixture differs from the trichlorobenzene-containing mixture behind the tested claim. It is not an exact replication of every electret or Brown device.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Targeted full-text review of apparatus, source assumptions or conclusions; no independent replication",
+      "pdf_url": "https://tu-dresden.de/ing/maschinenwesen/ilr/rfs/ressourcen/dateien/forschung/folder-2007-08-21-5231434330/ag_raumfahrtantriebe/JPC-Testing-the-Possibility-of-Weight-Changes-in-Highly-Polarized-Electrets.pdf?lang=de",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R41.pdf",
+        "bytes": 743169,
+        "sha256": "85c58e2d0136f059bccf7c8f0055d123eff4980b06a6212ed6f5eb6fd6215229",
+        "pages": 11,
+        "retrieved_on": "2026-09-22",
+        "url": "https://tu-dresden.de/ing/maschinenwesen/ilr/rfs/ressourcen/dateien/forschung/folder-2007-08-21-5231434330/ag_raumfahrtantriebe/JPC-Testing-the-Possibility-of-Weight-Changes-in-Highly-Polarized-Electrets.pdf?lang=de"
+      }
+    },
+    {
+      "id": "R42",
+      "authors": "Tajmar, M. and Schreiber, T.",
+      "year": 2020,
+      "title": "Put strong limits on all proposed theories so far assessing electrostatic propulsion: Does a charged high-voltage capacitor produce thrust?",
+      "venue": "Journal of Electrostatics 107, 103477",
+      "doi": "10.1016/j.elstat.2020.103477",
+      "arxiv": "",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0304388620300619",
+      "category": "Brown and static solid dielectrics",
+      "assessment": "Direct solid-dielectric capacitor test; null within sensitivity",
+      "annotation": "Explicitly investigates capacitor force claims without ionization, using ceramic/PTFE and varied electrode/dielectric geometry. No detected force up to 10 kV at ±0.3 mg accuracy (about 2.9 micronewtons). A directly relevant experimental constraint, with material, voltage and sensitivity limits; not a universal no-go theorem.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Targeted full-text review of apparatus, source assumptions or conclusions; no independent replication",
+      "pdf_url": "https://tu-dresden.de/ing/maschinenwesen/ilr/rfs/ressourcen/dateien/forschung/folder-2007-08-21-5231434330/ag_raumfahrtantriebe/Paper-Assessing-Electrostatic-Propulsion-Final.pdf?lang=de",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R42.pdf",
+        "bytes": 1604277,
+        "sha256": "a59807cf4b5c95c6e97207340f4df0c25dbc475e827e276553630b863c5f26d6",
+        "pages": 23,
+        "retrieved_on": "2026-09-22",
+        "url": "https://tu-dresden.de/ing/maschinenwesen/ilr/rfs/ressourcen/dateien/forschung/folder-2007-08-21-5231434330/ag_raumfahrtantriebe/Paper-Assessing-Electrostatic-Propulsion-Final.pdf?lang=de"
+      }
+    },
+    {
+      "id": "R43",
+      "authors": "Tajmar, Martin and Kößling, Matthias and Neunzig, Oliver",
+      "year": 2024,
+      "title": "In-depth experimental search for a coupling between gravity and electromagnetism with steady fields",
+      "venue": "Scientific Reports 14, 19427",
+      "doi": "10.1038/s41598-024-70286-w",
+      "arxiv": "2402.15640",
+      "url": "https://www.nature.com/articles/s41598-024-70286-w",
+      "category": "Brown and static solid dielectrics",
+      "assessment": "Direct steady-field tests; configuration-specific null results",
+      "annotation": "High-vacuum tests include low/high-permittivity solid capacitors, asymmetric and gradient dielectrics, and magnetic configurations. Authors report no anomalous capacitor force; sensitivity varies by configuration. This directly addresses the static branch. Use the per-device results and controls rather than treating a headline nanonewton sensitivity as universal.",
+      "checked_on": "2026-09-22",
+      "review_depth": "Targeted full-text review of apparatus, source assumptions or conclusions; no independent replication",
+      "pdf_url": "https://arxiv.org/pdf/2402.15640v2",
+      "download": {
+        "status": "downloaded",
+        "path": "papers/R43.pdf",
+        "bytes": 1841222,
+        "sha256": "32ec652be22797da6ab9af76cc8f5fb51d6aa4fba2841a7815f6879dbb7950ce",
+        "pages": 22,
+        "retrieved_on": "2026-09-22",
+        "url": "https://arxiv.org/pdf/2402.15640v2"
+      },
+      "arxiv_version": "v2",
+      "preprint_date": "2024-02-23",
+      "access_note": "Local reading copy is arXiv v2 (2 April 2024), predating the 21 August journal article. Journal title includes “experimental”; preprint title omits it. Targeted numerical comparison uses the identified preprint."
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+# Local reading copies; preserve source URLs and hashes in sources.json.
+papers/*.pdf

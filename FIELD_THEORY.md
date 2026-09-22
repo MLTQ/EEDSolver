@@ -7,6 +7,13 @@ reflected here with a decision log entry explaining the change and its theoretic
 
 This is the core research asset of the project. Handle with care.
 
+**Research review, 2026-09-22:** the [paper collection](research/README.md) and
+[repository audit](research/REPO_AUDIT.md) distinguish the implemented model
+from published theories. In particular, the source-conservation conditions,
+the direct Kaluza–Klein interpretation, and several historical claims below
+need the qualifications in that audit. The equations below remain a record
+of the existing solver, not validated predictions of new physical effects.
+
 ---
 
 ## Background: Why Standard EM Discards φ
@@ -315,12 +322,21 @@ spatial pattern should be recomputed with leads before positioning sensors.
 
 - Woodside, D.A. (1999). "Uniqueness theorems for classical four-vector fields
   in Euclidean and Minkowski spaces." J. Math. Phys. 40, 4911.
-- Arbab, A.I. (2009). "Extended electrodynamics and its consequences."
-  Prog. Phys. 3, 1–8.
-- The "Deleted Degrees of Freedom" paper (reference to be added by Max —
-  include full citation here before implementing `eed_coupled` formulation).
-- T.T. Brown experimental literature (for empirical motivation of coil geometries
-  to test).
+- Arbab, A.I. (2017). "Extended electrodynamics and its consequences."
+  Modern Physics Letters B 31, 1750099.
+  [DOI](https://doi.org/10.1142/S0217984917500993).
+- Located edition of the "Deleted Degrees of Freedom"
+  paper: Paul Wilhelm (2026-03-19), "The Deleted Degrees of Freedom: A Case for
+  Potential-Primary Electrodynamics," Advanced Rediscovery, author-published.
+  [Paper](https://advanced-rediscovery.com/research/deleted-degrees-of-freedom)
+  and [errata dated 2026-08-09](https://advanced-rediscovery.com/research/deleted-degrees-of-freedom-errata).
+  Max confirmed the motivating title on 2026-09-22; the precise original
+  reading copy has not been compared with this edition. This citation does
+  not supply a derivation of Oracle's custom coupled equations.
+- T.T. Brown: Max clarified the motivation as the static solid-dielectric
+  effect, distinct from ionic-wind lifters. See the
+  [focused source review](research/BROWN_STATIC_DIELECTRICS.md), including
+  direct capacitor tests (Talley 1991; Tajmar and colleagues 2020/2024).
 
 ---
 
