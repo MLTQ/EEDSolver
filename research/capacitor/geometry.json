@@ -1,0 +1,23 @@
+{
+  "id": "R43-symmetric-PTFE-vertical",
+  "source": "https://arxiv.org/abs/2402.15640v2",
+  "source_location": "Equation 1 and Table 1, symmetric PTFE capacitor, vertical force",
+  "source_pdf_sha256": "32ec652be22797da6ab9af76cc8f5fb51d6aa4fba2841a7815f6879dbb7950ce",
+  "diameter_m": 0.035,
+  "thickness_m": 0.0015,
+  "relative_permittivity": 2.1,
+  "density_kg_m3": 2200.0,
+  "voltage_V": 10000.0,
+  "measured_vertical_force_N": -1.79e-08,
+  "reported_vertical_uncertainty_N": 1.88e-08,
+  "decision_multiplier": 3.0,
+  "tabulated_candidate_force_N": 7.46e-07,
+  "assumptions": [
+    "Linear homogeneous dielectric; constant permittivity and density.",
+    "Parallel-plate approximation for capacitance and internal clamping load; no fringe correction.",
+    "No physical uncertainty assigned to nominal material values or geometry.",
+    "Vertical result only; no combination with horizontal measurements.",
+    "Reported uncertainty is used with the authors' 3-sigma criterion, not converted into a new statistical confidence claim.",
+    "Whole-apparatus zero self-force is an isolated, static Maxwell baseline, not a simulated measurement of this laboratory's residual forces."
+  ]
+}

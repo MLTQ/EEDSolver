@@ -6,6 +6,8 @@ This is a targeted collection of 43 sources, including papers, reviews, technica
 
 **Your starting point:** Deleted Degrees of Freedom and Brown’s static solid-dielectric claim. Start with the [focused Brown assessment](BROWN_STATIC_DIELECTRICS.md), which distinguishes this question from ionic-wind lifters and compares directly relevant experiments.
 
+**First calculation:** the [PTFE capacitor benchmark](capacitor/README.md) now reproduces a published candidate force, derives the ordinary force balance, compares the measured constraint, and checks units and gravitational boundary matching. Reproducible code, numerical checks and a figure accompany the derivation.
+
 ## What the literature supports
 
 Electromagnetism and gravity already interact in general relativity: electromagnetic energy, momentum, and stress contribute to spacetime curvature, and curved spacetime affects electromagnetic propagation. A useful next question is whether a proposed extension predicts a reproducible effect beyond that baseline. Wheeler's [geons](https://doi.org/10.1103/PhysRev.97.511) and the [Gertsenshtein calculation](https://jetp.ras.ru/cgi-bin/dn/e_014_01_0084.pdf) make the standard interaction concrete.

@@ -41,6 +41,8 @@ Consequently, for that AB model, a conserved complete source with zero scalar in
 
 ## A concrete next research milestone
 
+The initial analytic milestone is now available in the [PTFE capacitor benchmark](capacitor/README.md), including a force curve and explicit limits on what was modeled.
+
 **Produce a predicted force curve for one documented capacitor geometry, including the full apparatus, before changing the solver's gravity coupling.** Start with a published configuration so that the result can be compared with an existing sensitivity bound.
 
 1. **Specify the observable.** Distinguish the force on the dielectric, force on the complete capacitor and supply, balance weight, and acceleration of a separate neutral test mass. State the reference frame and the proposed momentum exchange.
