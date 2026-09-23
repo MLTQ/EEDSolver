@@ -206,7 +206,7 @@ Published 10 September 2026. Especially relevant to rotating-source claims: a no
 
 **Assessment:** Author-published speculative synthesis.
 
-The user confirms Deleted Degrees of Freedom as the motivating title. This is the located Paul Wilhelm edition, dated 19 March 2026; the exact original reading copy has not been compared. Preserve it as provenance and a claim index, not experimental verification, and read its errata first.
+The user-supplied 46-page copy dated 19 March 2026 was read in full on 23 September 2026 and compared with R18: no substantive prose revision found, but file hashes differ. Independent checks find failures in gauge/holonomy reasoning, mode and energy claims, and the asserted EM–gravity bridge. See DDOF_REVIEW.md and REVIEW_PROVENANCE.json; this is a claim index, not experimental validation.
 
 [Source](https://advanced-rediscovery.com/research/deleted-degrees-of-freedom) · [Local PDF · 46 pages](papers/R18.pdf).
 

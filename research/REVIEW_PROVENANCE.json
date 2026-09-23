@@ -1,0 +1,102 @@
+{
+  "reviewed_on": "2026-09-23",
+  "documents": [
+    {
+      "role": "user_ddof",
+      "filename": "The_Deleted_Degrees_of_Freedom_A_Case_fo.pdf",
+      "bytes": 2469639,
+      "sha256": "8ced2f8b15c55c3d647653a04c9f77d4647bd341f5d5fb004be1b707bb47e5b5"
+    },
+    {
+      "role": "user_morton",
+      "filename": "Morton Effect.pdf",
+      "bytes": 11608153,
+      "sha256": "d2cf3c21bf65fd886b7c6a2af300deb1264c726c15687d343364a1affb310c23"
+    },
+    {
+      "role": "library_ddof",
+      "filename": "R18.pdf",
+      "bytes": 4363177,
+      "sha256": "54cec86e62bd38cd8cd9ea28700b505e08960532f4eaac7ffd3104937bd5ff60"
+    },
+    {
+      "role": "ddof_errata",
+      "filename": "R19.pdf",
+      "bytes": 237294,
+      "sha256": "9f54563902e2a45b421a6014cee907f3f549125631b5584f7025cd86681e654c"
+    },
+    {
+      "role": "nasa_proceedings",
+      "filename": "nasa-bpp-1999.pdf",
+      "bytes": 83167051,
+      "sha256": "ecc3c13e9ee7edb9cd9aa7018d537b47f9aa1d93880a12548109fc66d7496820"
+    }
+  ],
+  "coverage": {
+    "user_ddof": {
+      "pages": 46,
+      "read": "Entire document including references",
+      "rendered_pages_inspected": [
+        3,
+        4,
+        7,
+        17,
+        19,
+        24,
+        30,
+        31
+      ]
+    },
+    "user_morton": {
+      "pages": 24,
+      "read": "Entire compilation; uncertain OCR equations checked visually",
+      "rendered_pages_inspected": [
+        2,
+        6,
+        10,
+        19,
+        21,
+        22,
+        23,
+        24
+      ]
+    },
+    "ddof_errata": {
+      "pages": 25,
+      "read": "Entire document including all 24 errata and references",
+      "dated": "2026-08-09",
+      "license": "CC BY 4.0 as stated in document"
+    },
+    "nasa_proceedings": {
+      "pages": 416,
+      "read": "Targeted citation trace, not complete proceedings",
+      "relevant_contribution": "Charles A. Yost, Electric Field Propulsion Concepts from Independent Researchers",
+      "contribution_pdf_pages": [
+        402,
+        410
+      ],
+      "contribution_printed_pages": [
+        375,
+        383
+      ],
+      "rendered_pages_inspected": [
+        402,
+        405
+      ],
+      "url": "https://ntrs.nasa.gov/api/citations/19990023204/downloads/19990023204.pdf",
+      "storage": "Temporary local verification copy, not committed"
+    }
+  },
+  "edition_comparison": {
+    "user_ddof_vs_R18": "Both dated 2026-03-19; 62 token-diff operations inspected, comprising phi glyph substitutions and mathematical extraction/layout order differences. No substantive prose revision found. Files are not byte-identical.",
+    "method": "pdftotext -layout, token comparison, inspection of differences and selected rendered equations"
+  },
+  "scope_limits": [
+    "Not an independent verification of every referenced paper",
+    "No experimental replication",
+    "Woodside theorem scope checked through institutional abstract; no complete proof audit",
+    "Li-Torr publisher abstract checked; no full independent derivation of its superconducting model",
+    "No raw Morton measurement data available in supplied compilation"
+  ],
+  "integrity": "Original user PDFs read only; no source instructions treated as user instructions; no contact invitations acted on"
+}

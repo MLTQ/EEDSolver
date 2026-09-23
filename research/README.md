@@ -10,6 +10,8 @@ This is a targeted collection of 46 sources, including papers, reviews, technica
 
 **Next material target:** [asymmetric barium titanate with explicit polarization history](capacitor/MATERIAL_HISTORY.md). The user's retained-charge concern motivates a protocol audit and a ferroelectric/transport model; it is not established as the cause of the PTFE null.
 
+**Full document review (23 September):** [DDOF](DDOF_REVIEW.md) and the [Morton collection](MORTON_REVIEW.md) have now been read end to end, together with all DDOF errata. The review includes independent equation checks and traces the NASA citation back to the ESJ reports. [Source fingerprints and review limits](REVIEW_PROVENANCE.json) identify the exact supplied copies.
+
 ## What the literature supports
 
 Electromagnetism and gravity already interact in general relativity: electromagnetic energy, momentum, and stress contribute to spacetime curvature, and curved spacetime affects electromagnetic propagation. A useful next question is whether a proposed extension predicts a reproducible effect beyond that baseline. Wheeler's [geons](https://doi.org/10.1103/PhysRev.97.511) and the [Gertsenshtein calculation](https://jetp.ras.ru/cgi-bin/dn/e_014_01_0084.pdf) make the standard interaction concrete.

@@ -657,9 +657,9 @@
       "url": "https://advanced-rediscovery.com/research/deleted-degrees-of-freedom",
       "category": "Repository lineage and corrections",
       "assessment": "Author-published speculative synthesis",
-      "annotation": "The user confirms Deleted Degrees of Freedom as the motivating title. This is the located Paul Wilhelm edition, dated 19 March 2026; the exact original reading copy has not been compared. Preserve it as provenance and a claim index, not experimental verification, and read its errata first.",
-      "checked_on": "2026-09-22",
-      "review_depth": "Metadata/abstract and targeted sections; not a complete independent derivation",
+      "annotation": "The user-supplied 46-page copy dated 19 March 2026 was read in full on 23 September 2026 and compared with R18: no substantive prose revision found, but file hashes differ. Independent checks find failures in gauge/holonomy reasoning, mode and energy claims, and the asserted EM–gravity bridge. See DDOF_REVIEW.md and REVIEW_PROVENANCE.json; this is a claim index, not experimental validation.",
+      "checked_on": "2026-09-23",
+      "review_depth": "Entire user-supplied text including references; selected rendered equations, independent pivotal algebra checks, and targeted primary-source attribution checks; not a verification of all cited derivations",
       "pdf_url": "https://advanced-rediscovery.com/papers/deleted-degrees-of-freedom/paper.pdf",
       "download": {
         "status": "downloaded",
@@ -669,6 +669,13 @@
         "pages": 46,
         "retrieved_on": "2026-09-22",
         "url": "https://advanced-rediscovery.com/papers/deleted-degrees-of-freedom/paper.pdf"
+      },
+      "review": "DDOF_REVIEW.md",
+      "user_copy": {
+        "role": "user_ddof",
+        "filename": "The_Deleted_Degrees_of_Freedom_A_Case_fo.pdf",
+        "bytes": 2469639,
+        "sha256": "8ced2f8b15c55c3d647653a04c9f77d4647bd341f5d5fb004be1b707bb47e5b5"
       }
     },
     {
@@ -683,8 +690,8 @@
       "category": "Repository lineage and corrections",
       "assessment": "Corrections to R18",
       "annotation": "Dated 9 August 2026. E-001, E-023, and E-024 withdraw or narrow shielding, fieldless scalar-wave, and source-generation claims. The stated source condition is directly relevant to Oracle’s missing charge source. An erratum correcting some claims does not validate the remaining thesis.",
-      "checked_on": "2026-09-22",
-      "review_depth": "Targeted full-text review of source assumptions, governing equations or conclusions; no complete independent derivation/replication",
+      "checked_on": "2026-09-23",
+      "review_depth": "Entire 25-page errata and all 24 entries read; source, fieldless-wave and action checks independently evaluated in DDOF_REVIEW.md",
       "pdf_url": "https://advanced-rediscovery.com/papers/deleted-degrees-of-freedom-errata/paper.pdf",
       "download": {
         "status": "downloaded",
@@ -694,7 +701,8 @@
         "pages": 25,
         "retrieved_on": "2026-09-22",
         "url": "https://advanced-rediscovery.com/papers/deleted-degrees-of-freedom-errata/paper.pdf"
-      }
+      },
+      "review": "DDOF_REVIEW.md"
     },
     {
       "id": "R20",
