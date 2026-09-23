@@ -2,11 +2,13 @@
 
 Collected **22 September 2026**. Start here, then use the [annotated paper library](PAPERS.md), [BibTeX bibliography](references.bib), and [repository audit](REPO_AUDIT.md).
 
-This is a targeted collection of 43 sources, including papers, reviews, technical reports, a historical patent, and an author-published paper with its errata. It is a starting research map, not a systematic review, an independent replication of every derivation, or a solution to unification. Publication and citation counts are not evidence that a proposed effect exists.
+This is a targeted collection of 46 sources, including papers, reviews, technical reports, a historical patent, and an author-published paper with its errata. It is a starting research map, not a systematic review, an independent replication of every derivation, or a solution to unification. Publication and citation counts are not evidence that a proposed effect exists.
 
 **Your starting point:** Deleted Degrees of Freedom and Brown’s static solid-dielectric claim. Start with the [focused Brown assessment](BROWN_STATIC_DIELECTRICS.md), which distinguishes this question from ionic-wind lifters and compares directly relevant experiments.
 
 **First calculation:** the [PTFE capacitor benchmark](capacitor/README.md) now reproduces a published candidate force, derives the ordinary force balance, compares the measured constraint, and checks units and gravitational boundary matching. Reproducible code, numerical checks and a figure accompany the derivation.
+
+**Next material target:** [asymmetric barium titanate with explicit polarization history](capacitor/MATERIAL_HISTORY.md). The user's retained-charge concern motivates a protocol audit and a ferroelectric/transport model; it is not established as the cause of the PTFE null.
 
 ## What the literature supports
 
@@ -71,7 +73,7 @@ At \(U=1\,\mathrm{MJ}\) and \(r=1\,\mathrm{m}\), this is about \(7.4\times10^{-2
 ## Collection and access
 
 - [PAPERS.md](PAPERS.md): grouped annotations, source links, access status, and available local PDFs.
-- [references.bib](references.bib): 43 matching citation keys, R01–R43, for Zotero or a paper draft.
+- [references.bib](references.bib): 46 matching citation keys, R01–R46, for Zotero or a paper draft.
 - [sources.json](sources.json): citation metadata, source URLs, review depth, pinned arXiv versions where available, retrieval status, page counts, and SHA-256 checksums.
 - [papers/](papers/): local reading copies. Downloaded PDFs are excluded from git; the bibliography and retrieval manifest are committed. A fresh clone therefore needs to retrieve reading copies from the recorded URLs.
 

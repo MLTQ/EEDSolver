@@ -4,6 +4,8 @@
 
 ![Force comparison and numerical verification](force_comparison.png)
 
+**Material-history scope:** this benchmark assumes a reversible dielectric. It does not evaluate the user's hypothesis of PTFE electret buildup between runs or an asymmetric BaTiO₃ capacitor. The [retained-charge assessment](MATERIAL_HISTORY.md) documents the protocol gaps, relevant ceramic tests and requirements for the next model. Retention could affect a measurement protocol, but has not been shown to explain this null result.
+
 ## What was selected
 
 The symmetric PTFE capacitor in **R43, Table 1**: 35 mm diameter, 1.5 mm thickness, relative permittivity 2.1, density 2,200 kg/m³, 10 kV. The data and source checksum are in [geometry.json](geometry.json). We use the **vertical** measurement only. The source is [Tajmar, Kößling & Neunzig, arXiv v2](https://arxiv.org/abs/2402.15640v2), preceding the [2024 journal article](https://doi.org/10.1038/s41598-024-70286-w); its Eq. 1 supplies the compared force law. No raw measurement data were reanalyzed.

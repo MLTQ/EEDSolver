@@ -4,6 +4,8 @@ Research focus clarified by Max on 22 September 2026: **Deleted Degrees of Freed
 
 The question is whether a charged solid dielectric produces a reproducible force, weight change, or external gravitational field beyond ordinary electromechanics and general relativity. Those are three different observables. A force on a capacitor alone does not identify gravity or demonstrate thrust of an isolated apparatus.
 
+The user subsequently prioritized **asymmetric barium-titanate capacitors** and raised PTFE charge retention between runs. See the [material-history assessment](capacitor/MATERIAL_HISTORY.md) before extrapolating the first PTFE benchmark to that target.
+
 ## Read this branch in order
 
 | Source | Why it belongs here | What it establishes or leaves open |

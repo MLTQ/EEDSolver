@@ -1,6 +1,6 @@
 # Local paper cache
 
-The PDF filenames correspond to R01–R43 in [the annotated library](../PAPERS.md).
+The PDF filenames correspond to R01–R46 in [the annotated library](../PAPERS.md).
 Only successfully retrieved papers are present. The exact source URL, arXiv
 version when available, page count, retrieval date, and SHA-256 are recorded in
 [sources.json](../sources.json).

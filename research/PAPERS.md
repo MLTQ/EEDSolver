@@ -1,6 +1,6 @@
 # Annotated paper library
 
-Collected 22 September 2026: **43 sources; 30 PDFs downloaded locally; 13 references linked without a local PDF.**
+Collected 22 September 2026: **46 sources; 31 PDFs downloaded locally; 15 references linked without a local PDF.**
 
 Use the [research guide](README.md) for reading order and the [repo audit](REPO_AUDIT.md) for implications. “Established” may describe a theoretical framework; it does not mean every effect calculated within it has been detected. Assessments below are this collection’s appraisal. Most entries received metadata/abstract review plus selected sections, not a full independent derivation.
 
@@ -503,3 +503,41 @@ High-vacuum tests include low/high-permittivity solid capacitors, asymmetric and
 Reading copy: arXiv:2402.15640v2.
 
 Local reading copy is arXiv v2 (2 April 2024), predating the 21 August journal article. Journal title includes “experimental”; preprint title omits it. Targeted numerical comparison uses the identified preprint.
+
+## Material memory and barium titanate
+
+See the [retained-charge assessment and next model requirements](capacitor/MATERIAL_HISTORY.md).
+
+### R44 — Enhancing electrostatic charge stability of corona charged Teflon electret films for radiation dosimetry by optimizing metal electrode backing material
+
+**Rabiee, Sahel and Sohrabi, Mehdi and Afarideh, Hossein (2024).** Applied Radiation and Isotopes 205, 111187.
+
+**Assessment:** PTFE retained-charge mechanism; different apparatus.
+
+Demonstrates that metal electrode backing influences charge retention in deliberately corona-charged PTFE electret films. Supports treating retained charge as a material variable; does not demonstrate electret buildup or force suppression in the R42/R43 capacitor experiments.
+
+[Source](https://pubmed.ncbi.nlm.nih.gov/38245996/) · [DOI](https://doi.org/10.1016/j.apradiso.2024.111187) · No local PDF: reference link retained.
+
+### R45 — Kinetics of ferroelectric switching in poled barium titanate ceramics: Effects of electrical cycling rate
+
+**Kannan, Vignesh and Trassin, Morgan and Kochmann, Dennis M. (2022).** Materialia 25, 101553.
+
+**Assessment:** Direct BaTiO3 polarization and strain experiment.
+
+Measures rate-dependent polarization switching and strain in poled BaTiO3 ceramics. A relevant constitutive-model source for the next asymmetric-capacitor benchmark: remanence, coercivity and deformation cannot be captured by a single constant permittivity.
+
+[Source](https://www.sciencedirect.com/science/article/pii/S2589152922002356) · [DOI](https://doi.org/10.1016/j.mtla.2022.101553) · No local PDF: reference link retained.
+
+Institutional PDF retrieval returned HTTP 429; no local reading copy was obtained.
+
+### R46 — High-field conduction in barium titanate
+
+**Morrison, F. D. and Zubko, P. and Jung, D. J. and Scott, J. F. and Baxter, P. and Saad, M. M. and Bowman, R. M. and Gregg, J. M. (2005).** Applied Physics Letters 86, 152903.
+
+**Assessment:** BaTiO3 transport mechanism; scale-dependent applicability.
+
+Reports high-field space-charge-limited conduction associated with traps in thin BaTiO3 crystals, with comparison to multilayer ceramics. Establishes a transport mechanism to check; it does not determine the leakage of a chosen bulk dielectric or supply an anomalous force law.
+
+[Source](https://arxiv.org/abs/cond-mat/0409585) · [DOI](https://doi.org/10.1063/1.1886899) · [Local PDF · 15 pages](papers/R46.pdf).
+
+Journal author order follows the Queen’s University Belfast publication record. The preprint title page places Gregg before Bowman, and arXiv catalog metadata starts with Scott; these records differ in ordering.
